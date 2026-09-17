@@ -1,7 +1,10 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 from app.core.passwords import MAX_LENGTH, MIN_LENGTH
 from app.models.user import User
+from app.services import conduct_service
 
 
 class UserRegister(BaseModel):
@@ -25,6 +28,9 @@ class AuthUserOut(BaseModel):
     # Identidad pública (para enlazar a /perfil/<handle>); `username` sigue siendo el login.
     handle: str
     isDev: bool
+    adultConfirmed: bool
+    # Solo si sigue vigente: una restricción pasada sale como null.
+    restrictedUntil: datetime | None
 
     @classmethod
     def from_user(cls, user: User) -> "AuthUserOut":
@@ -34,6 +40,8 @@ class AuthUserOut(BaseModel):
             displayName=user.display_name,
             handle=user.handle,
             isDev=user.is_dev,
+            adultConfirmed=conduct_service.adult_confirmed(user),
+            restrictedUntil=conduct_service.restricted_until(user),
         )
 
 

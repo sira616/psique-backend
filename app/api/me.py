@@ -1,5 +1,12 @@
+from typing import Literal
+
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
@@ -10,7 +17,9 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.auth import AuthUserOut
 from app.schemas.profile import MyProfileOut, ProfilePatchIn
-from app.services import media_service, profile_service
+from app.api.auth import clear_refresh_cookie
+from app.core.passwords import MAX_LENGTH
+from app.services import account_service, conduct_service, media_service, profile_service, usage_service
 from app.services.media_service import AVATAR, BANNER, ImageKind, ImageRejectedError
 from app.services.profile_service import ProfileError, field_error
 
@@ -18,6 +27,9 @@ router = APIRouter(prefix="/api/me", tags=["me"])
 
 # Re-codificar imágenes es CPU nuestra: más holgado que el login, pero con tope.
 _upload_rate_limiter = RateLimiter(settings.RATE_LIMIT_MAX_REQUESTS * 2, settings.RATE_LIMIT_WINDOW_SECONDS)
+# Exportar recorre toda la cuenta; borrar comprueba la contraseña. Los dos, al ritmo del login.
+_export_rate_limiter = RateLimiter(settings.RATE_LIMIT_MAX_REQUESTS, settings.RATE_LIMIT_WINDOW_SECONDS)
+_delete_rate_limiter = RateLimiter(settings.RATE_LIMIT_MAX_REQUESTS, settings.RATE_LIMIT_WINDOW_SECONDS)
 
 # Lo que añade el multipart alrededor del fichero (boundary y cabeceras de la parte).
 _MULTIPART_MARGIN = 16 * 1024
@@ -41,6 +53,71 @@ _UPLOAD_DOC = {
 @router.get("", response_model=AuthUserOut)
 def get_me(user: User = Depends(get_current_user)):
     return AuthUserOut.from_user(user)
+
+
+class UsageOut(BaseModel):
+    turnsUsed: int
+    # null con cupo ilimitado (cuentas dev con DEV_UNLIMITED_TURNS).
+    turnsLimit: int | None
+    turnsRemaining: int | None
+    unlimited: bool
+    resetsAt: datetime
+
+
+@router.get("/usage", response_model=UsageOut)
+def get_usage(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return usage_service.usage_out(db, user)
+
+
+@router.get("/export", dependencies=[Depends(_export_rate_limiter)])
+def export_account(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    data = account_service.export_data(db, user)
+    filename = f"psique-datos-{user.handle}-{usage_service.local_today().isoformat()}.json"
+    return JSONResponse(
+        content=jsonable_encoder(data),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
+class AccountDeleteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: str = Field(min_length=1, max_length=MAX_LENGTH)
+    # Escrito a mano por la persona: un clic por error no borra nada.
+    confirmation: Literal["BORRAR"]
+
+
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(_delete_rate_limiter)])
+def delete_account(payload: AccountDeleteIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    try:
+        account_service.delete_account(db, user, payload.password)
+    except account_service.InvalidPasswordError:
+        # 403 y no 401: el cliente trata un 401 como sesión caducada y refrescaría.
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": "La contraseña no es correcta.", "code": "invalid_password"},
+        )
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    clear_refresh_cookie(response)
+    return response
+
+
+class AdultConfirmationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Tiene que ser `true` literal: la confirmación es un acto explícito, no un default.
+    confirm: Literal[True]
+
+
+@router.post("/adult-confirmation", response_model=AuthUserOut)
+def confirm_adult(payload: AdultConfirmationIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Declaración de mayoría de edad para abrir libros +18. No es una verificación."""
+    return AuthUserOut.from_user(conduct_service.confirm_adult(db, user))
+
+
+@router.delete("/adult-confirmation", response_model=AuthUserOut)
+def revoke_adult(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return AuthUserOut.from_user(conduct_service.revoke_adult(db, user))
 
 
 @router.get("/profile", response_model=MyProfileOut)

@@ -40,6 +40,10 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
     )
 
 
+def clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(REFRESH_COOKIE, path=_COOKIE_PATH)
+
+
 def _session(response: Response, db: Session, user: User) -> SessionOut:
     access, refresh = auth_service.issue_session(db, user)
     _set_refresh_cookie(response, refresh)
@@ -87,7 +91,7 @@ def refresh(
     try:
         user, access, new_refresh = auth_service.rotate_session(db, psique_refresh)
     except AuthError as exc:
-        response.delete_cookie(REFRESH_COOKIE, path=_COOKIE_PATH)
+        clear_refresh_cookie(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(exc),
@@ -105,5 +109,5 @@ def logout(
     if psique_refresh:
         auth_service.revoke(db, psique_refresh)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
-    response.delete_cookie(REFRESH_COOKIE, path=_COOKIE_PATH)
+    clear_refresh_cookie(response)
     return response

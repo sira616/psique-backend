@@ -68,7 +68,7 @@ def test_explorar_no_filtra_premisa_ni_perfil_de_un_concepto(client, llm_concept
 
     resp = client.get("/api/explore", params={"mode": "concepto", "limit": 50}, headers=auth_headers(client))
     tarjeta = next(c for c in resp.json()["items"] if c["id"] == concepto["id"])
-    assert set(tarjeta) == {"id", "characterId", "mode", "title", "hook", "tone", "definition", "author", "isMine", "publishedAt"}
+    assert set(tarjeta) == {"id", "characterId", "mode", "title", "hook", "tone", "definition", "author", "isMine", "publishedAt", "adult"}
     assert (tarjeta["title"], tarjeta["tone"], tarjeta["definition"]) == ("La carta del faro", "misterioso", None)
     perfil = _perfil_llm()["perfil"]
     for filtrado in (PREMISA, SECRETO, "Elio", perfil["mundo"], perfil["escenario_inicial"], perfil["saludo"]):

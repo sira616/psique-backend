@@ -67,6 +67,19 @@ class Settings(BaseSettings):
     # se renovaría a la 1 o las 2 de la madrugada.
     ECONOMY_TIMEZONE: str = "Europe/Madrid"
 
+    # --- Política de contenido ---
+    # Cierres de partida en la ventana que activan la restricción de la cuenta.
+    CONDUCT_CLOSURES_LIMIT: int = 3
+    CONDUCT_WINDOW_DAYS: int = 30
+    CONDUCT_RESTRICTION_DAYS: int = 7
+
+    # --- Tope de gasto en LLM ---
+    # Turnos de chat que llegan al modelo por cuenta y día local (ECONOMY_TIMEZONE). Los
+    # óbolos limitan capítulos, no mensajes: sin esto una cuenta podría gastar sin fin.
+    CHAT_TURNS_PER_DAY: int = 60
+    # Las cuentas is_dev prueban a fondo; se siguen contando, pero no se les corta.
+    DEV_UNLIMITED_TURNS: bool = True
+
     RATE_LIMIT_MAX_REQUESTS: int = 5
     RATE_LIMIT_WINDOW_SECONDS: int = 60
 

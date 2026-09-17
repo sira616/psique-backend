@@ -254,6 +254,7 @@ def create(db: DbSession, user: User, payload: DefinedStoryIn | ConceptStoryIn) 
         profile=profile.model_dump(mode="json", exclude={"free_first_read"}),
         is_public=payload.isPublic,
         free_first_read=payload.freeFirstRead,
+        adult=payload.adult,
         published_at=_now() if payload.isPublic else None,
     )
     db.add(blueprint)
@@ -289,7 +290,12 @@ def get_owned(db: DbSession, user_id: str, blueprint_id: str) -> StoryBlueprint 
 
 
 def update_settings(
-    db: DbSession, blueprint: StoryBlueprint, *, is_public: bool | None = None, free_first_read: bool | None = None
+    db: DbSession,
+    blueprint: StoryBlueprint,
+    *,
+    is_public: bool | None = None,
+    free_first_read: bool | None = None,
+    adult: bool | None = None,
 ) -> StoryBlueprint:
     if is_public is not None:
         if is_public and not blueprint.is_public:
@@ -297,6 +303,8 @@ def update_settings(
         blueprint.is_public = is_public
     if free_first_read is not None:
         blueprint.free_first_read = free_first_read
+    if adult is not None:
+        blueprint.adult = adult
     db.commit()
     db.refresh(blueprint)
     return blueprint
@@ -377,6 +385,7 @@ def to_out(blueprint: StoryBlueprint) -> CustomStoryOut:
         definition=_definition(blueprint, profile),
         isPublic=blueprint.is_public,
         freeFirstRead=blueprint.free_first_read,
+        adult=blueprint.adult,
         publishedAt=blueprint.published_at,
         createdAt=blueprint.created_at,
     )
@@ -423,11 +432,18 @@ def card_out(blueprint: StoryBlueprint, author: User, viewer_id: str) -> StoryCa
         ),
         isMine=blueprint.owner_id == viewer_id,
         publishedAt=blueprint.published_at,
+        adult=blueprint.adult,
     )
 
 
 def list_public(
-    db: DbSession, *, limit: int, offset: int, mode: str | None = None, owner_id: str | None = None
+    db: DbSession,
+    *,
+    limit: int,
+    offset: int,
+    mode: str | None = None,
+    owner_id: str | None = None,
+    include_adult: bool = False,
 ) -> tuple[list[tuple[StoryBlueprint, User]], bool]:
     """Públicas y sin borrar, las publicadas más recientemente primero. Devuelve también
     si hay más: se pide una fila de más en vez de contar la tabla entera."""
@@ -440,6 +456,8 @@ def list_public(
         query = query.where(StoryBlueprint.mode == mode)
     if owner_id:
         query = query.where(StoryBlueprint.owner_id == owner_id)
+    if not include_adult:
+        query = query.where(StoryBlueprint.adult.is_(False))
     rows = db.execute(
         query.order_by(StoryBlueprint.published_at.desc(), StoryBlueprint.id.desc())
         .limit(limit + 1)
@@ -455,6 +473,7 @@ def character_out(blueprint: StoryBlueprint) -> CharacterOut:
         "mode": blueprint.mode,
         "title": blueprint.title,
         "hook": blueprint.hook,
+        "adult": blueprint.adult,
     }
     if blueprint.mode == "concepto":
         return CharacterOut(**base, name=None, age=None, tagline=None, traits=None, scenario=None)

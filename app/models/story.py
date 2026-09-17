@@ -13,6 +13,8 @@ from app.core.database import Base
 
 STORY_ACTIVE = "activa"
 STORY_ARCHIVED = "archivada"
+# Cerrada por incumplir la política de contenido. Como una archivada, solo se lee.
+STORY_CLOSED = "cerrada"
 
 
 class Story(Base):
@@ -45,9 +47,12 @@ class Story(Base):
     # no sea null, `phase` no avanza. Ver `story_service.unlock_chapter`.
     pending_phase: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     turn_count: Mapped[int] = mapped_column(Integer, default=0)
-    # "activa" | "archivada". Una archivada solo se lee: ni chat ni desbloqueos.
+    # "activa" | "archivada" | "cerrada". Las dos últimas solo se leen: ni chat ni desbloqueos.
     status: Mapped[str] = mapped_column(String(12), default=STORY_ACTIVE, server_default=STORY_ACTIVE)
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Motivo corto y genérico, nunca el mensaje que lo provocó.
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    closed_reason: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     # Resumen rodante de lo que ya no cabe en la ventana de contexto. Cubre los mensajes
     # hasta `summary_upto_message_id` (null = aún ninguno). Ver `summary_service`.
     summary: Mapped[str] = mapped_column(Text, default="")
@@ -101,9 +106,11 @@ class StoryEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     story_id: Mapped[str] = mapped_column(ForeignKey("stories.id"), index=True)
-    kind: Mapped[str] = mapped_column(String(16))  # turno | senal | decision | transicion
+    kind: Mapped[str] = mapped_column(String(16))  # turno | senal | decision | transicion | ajuste
     name: Mapped[str] = mapped_column(String(40))
     turn: Mapped[int] = mapped_column(Integer)
+    # Solo los "ajuste": el peso va en el evento porque no sale de ninguna tabla de pesos.
+    weight: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     detail: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -119,7 +126,9 @@ class StoryBlueprint(Base):
     __tablename__ = "story_blueprints"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    # Null solo si el autor borró su cuenta y otras cuentas seguían partidas con ella: queda
+    # anónima y con `deleted_at`, hasta que `scripts.cleanup` la borre sin partidas.
+    owner_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
     mode: Mapped[str] = mapped_column(String(12))  # "definida" | "concepto"
     title: Mapped[str] = mapped_column(String(80))
     hook: Mapped[str] = mapped_column(String(140))
@@ -136,6 +145,9 @@ class StoryBlueprint(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # La primera partida de cada cuenta no cuesta óbolos; releer siempre sí.
     free_first_read: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # +18: solo lo abren cuentas que confirmaron ser mayores de edad. No sube el techo de lo
+    # que se genera; ver `app.story.content_policy`.
+    adult: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     __table_args__ = (Index("ix_story_blueprints_explore", "is_public", "published_at"),)
 
@@ -158,3 +170,18 @@ class BookReview(Base):
     text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ConductIncident(Base):
+    """Una partida cerrada por la política de contenido. Sin el texto: nivel y regla bastan
+    para contar reincidencias, y el mensaje ofensivo no se guarda en ningún sitio."""
+
+    __tablename__ = "conduct_incidents"
+    __table_args__ = (Index("ix_conduct_incidents_user_fecha", "user_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    story_id: Mapped[str] = mapped_column(ForeignKey("stories.id"))
+    level: Mapped[str] = mapped_column(String(12))
+    rule: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

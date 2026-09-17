@@ -229,7 +229,7 @@ def test_releer_archiva_la_activa_y_cobra(client):
     assert [s["id"] for s in client.get("/api/stories", headers=headers).json()] == [nueva["id"]]
     historial = client.get("/api/books/lucia/history", headers=headers).json()
     assert [h["storyId"] for h in historial] == [vieja["id"]]
-    assert set(historial[0]) == {"storyId", "startedAt", "archivedAt", "phase", "phaseLabel", "phaseIndex", "phaseCount", "affinity"}
+    assert set(historial[0]) == {"storyId", "status", "startedAt", "archivedAt", "closedAt", "phase", "phaseLabel", "phaseIndex", "phaseCount", "affinity"}
 
     # Después de releer, empezar de nuevo devuelve la activa y no cobra.
     assert _empezar(client, headers, esperado=200)["id"] == nueva["id"]
@@ -405,7 +405,7 @@ def test_recomendados_excluyen_privados_borrados_y_el_actual(client):
     assert ids[0] == gemelo["characterId"]
     for fuera in (actual, privado_propio, borrado, privado_ajeno):
         assert fuera["characterId"] not in ids
-    assert set(cartas[0]) == {"id", "origin", "mode", "title", "hook", "tone", "author", "readers"}
+    assert set(cartas[0]) == {"id", "origin", "mode", "title", "hook", "tone", "author", "readers", "adult"}
 
 
 # --- Reseñas ----------------------------------------------------------------------------

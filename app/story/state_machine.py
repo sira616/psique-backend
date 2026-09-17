@@ -167,9 +167,11 @@ def choices_for(phase: Phase) -> tuple[QuickChoice, ...]:
 
 @dataclass(frozen=True)
 class Event:
-    kind: str  # "turno" | "senal" | "decision" | "transicion"
+    kind: str  # "turno" | "senal" | "decision" | "transicion" | "ajuste"
     name: str
     turn: int
+    # Solo en "ajuste" (herramientas de dev): puntos que suma o resta tal cual.
+    weight: int | None = None
 
 
 @dataclass(frozen=True)
@@ -194,22 +196,36 @@ def _decision_weight(name: str) -> int:
 
 
 def compute_affinity(events: list[Event]) -> int:
-    """Afinidad 0-100 a partir de los eventos. Determinista y sin estado."""
+    """Afinidad 0-100 a partir de los eventos. Determinista y sin estado.
+
+    Se recorta a 0-100 después de cada evento y no solo al final. Con el recorte al final,
+    tres turnos groseros dejaban una deuda invisible (la partida enseñaba 0 y por debajo
+    iba por -17) que había que pagar antes de que un buen turno se notara; y al revés, lo
+    ganado por encima de 100 servía de colchón oculto. Lo que se ve es lo que hay.
+    """
     score = BASE_AFFINITY
     per_turn: Counter = Counter()
     turns = 0
+
+    def clamp(value: int) -> int:
+        return max(MIN_AFFINITY, min(MAX_AFFINITY, value))
+
     for ev in events:
         if ev.kind == "turno":
             turns += 1
+            # Constancia: el punto se suma en el turno que lo gana, no todo al final.
+            if turns % TURN_BONUS_EVERY == 0 and turns // TURN_BONUS_EVERY <= TURN_BONUS_CAP:
+                score = clamp(score + 1)
         elif ev.kind == "senal" and ev.name in SIGNAL_WEIGHTS:
             if per_turn[ev.turn] >= MAX_SIGNALS_PER_TURN:
                 continue
             per_turn[ev.turn] += 1
-            score += SIGNAL_WEIGHTS[ev.name]
+            score = clamp(score + SIGNAL_WEIGHTS[ev.name])
         elif ev.kind == "decision":
-            score += _decision_weight(ev.name)
-    score += min(turns // TURN_BONUS_EVERY, TURN_BONUS_CAP)
-    return max(MIN_AFFINITY, min(MAX_AFFINITY, score))
+            score = clamp(score + _decision_weight(ev.name))
+        elif ev.kind == "ajuste" and ev.weight is not None:
+            score = clamp(score + ev.weight)
+    return score
 
 
 def derive_state(events: list[Event]) -> StoryState:

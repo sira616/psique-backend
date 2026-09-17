@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api import policy
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
@@ -41,7 +42,7 @@ def get_history(book_id: str = BookId, db: Session = Depends(get_db), user: User
 
 @router.get("/{book_id}/recommended", response_model=list[BookCardOut])
 def get_recommended(book_id: str = BookId, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return book_service.recommended(db, _book(db, user, book_id))
+    return book_service.recommended(db, _book(db, user, book_id), user)
 
 
 @router.post("/{book_id}/reread", response_model=StoryOut, status_code=status.HTTP_201_CREATED)
@@ -52,6 +53,10 @@ def reread(book_id: str = BookId, db: Session = Depends(get_db), user: User = De
     profile = story_service.resolve_profile(db, user.id, book.id)
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=BOOK_NOT_FOUND)
+    # Releer tras un cierre está permitido; con la cuenta restringida, no.
+    blocked = policy.reading_gate(db, user, book.id)
+    if blocked is not None:
+        return blocked
     try:
         story = story_service.reread(db, user, book.id, profile)
     except story_service.NotStartedError:

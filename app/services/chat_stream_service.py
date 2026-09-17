@@ -20,13 +20,14 @@ Eventos: `token {text}`, `state {...}`, `error {message}`, `done {}`.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import date
 
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.llm import router as llm_router
 from app.llm.prompts.story import build_system_prompt
 from app.models.story import STORY_ACTIVE, Message, Story, StoryEvent
-from app.services import story_service, summary_service
+from app.services import story_service, summary_service, usage_service
 from app.story import context, memory
 from app.story import scene as scene_rules
 from app.story import state_machine as sm
@@ -48,18 +49,28 @@ def _event(name: str, data: dict) -> dict:
 
 
 def stream_turn(
-    story_id: str, user_message: str, choice: scene_rules.Suggestion | None = None
+    story_id: str,
+    user_message: str,
+    choice: scene_rules.Suggestion | None = None,
+    *,
+    usage_day: date | None = None,
 ) -> Iterator[dict]:
+    """`usage_day`: día del cupo que la ruta ya reservó para este turno. Si el turno no llega
+    a producir nada (partida cambiada entre medias o modelo caído), se devuelve."""
     # Sesión propia: el generador sigue vivo después de que FastAPI cierre la de la
     # petición, y compartirla sería depender de ese orden.
     with SessionLocal() as db:
         story = db.get(Story, story_id)
         profile = story_service.story_profile(db, story) if story else None
         if story is None or profile is None:
+            if story is not None and usage_day is not None:
+                usage_service.refund_turn(db, story.user_id, usage_day)
             yield _event("error", {"message": "La historia no existe."})
             yield _event("done", {})
             return
         if story.status != STORY_ACTIVE or story.pending_phase is not None:
+            if usage_day is not None:
+                usage_service.refund_turn(db, story.user_id, usage_day)
             yield _event("error", {"message": STORY_CLOSED_MESSAGE})
             yield _event("done", {})
             return
@@ -106,7 +117,9 @@ def stream_turn(
         except llm_router.LLMUnavailableError:
             # El turno del usuario queda guardado; el router fusiona dos turnos de usuario
             # seguidos, así que reintentar no rompe el historial. No se evalúa el estado:
-            # un fallo del modelo no puede mover la relación.
+            # un fallo del modelo no puede mover la relación, ni gastar cupo del día.
+            if usage_day is not None:
+                usage_service.refund_turn(db, story.user_id, usage_day)
             yield _event("error", {"message": LLM_UNAVAILABLE_MESSAGE})
             yield _event("done", {})
             return

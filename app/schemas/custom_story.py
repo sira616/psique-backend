@@ -39,6 +39,7 @@ class DefinedStoryIn(_Input):
     hook: _text(10, 140) | None = None
     isPublic: bool = False
     freeFirstRead: bool = True
+    adult: bool = False
 
     @field_validator("age")
     @classmethod
@@ -54,6 +55,7 @@ class ConceptStoryIn(_Input):
     tone: _text(3, 60) | None = None
     isPublic: bool = False
     freeFirstRead: bool = True
+    adult: bool = False
 
 
 def _mode(value: object) -> str | None:
@@ -92,6 +94,7 @@ class CustomStoryOut(BaseModel):
     definition: DefinitionOut | None
     isPublic: bool
     freeFirstRead: bool
+    adult: bool
     publishedAt: datetime | None
     createdAt: datetime | None
 
@@ -101,9 +104,10 @@ class CustomStoryPatchIn(_Input):
 
     isPublic: bool | None = None
     freeFirstRead: bool | None = None
+    adult: bool | None = None
 
     @model_validator(mode="after")
     def al_menos_uno(self):
-        if self.isPublic is None and self.freeFirstRead is None:
-            raise PydanticCustomError("missing", "Manda `isPublic` o `freeFirstRead`.")
+        if self.isPublic is None and self.freeFirstRead is None and self.adult is None:
+            raise PydanticCustomError("missing", "Manda `isPublic`, `freeFirstRead` o `adult`.")
         return self

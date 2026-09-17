@@ -94,7 +94,7 @@ def reencode(data: bytes, max_side: int) -> bytes:
             raise invalid
 
 
-def _delete_file(relative: str | None) -> None:
+def delete_file(relative: str | None) -> None:
     if not relative:
         return
     root = media_root()
@@ -120,10 +120,10 @@ def store(db: DbSession, user: User, kind: ImageKind, data: bytes) -> None:
         db.commit()
     except Exception:
         db.rollback()
-        _delete_file(relative)
+        delete_file(relative)
         raise
     # Después del commit: si fallara, el usuario seguiría apuntando al fichero anterior.
-    _delete_file(previous)
+    delete_file(previous)
 
 
 def remove(db: DbSession, user: User, kind: ImageKind) -> None:
@@ -132,4 +132,4 @@ def remove(db: DbSession, user: User, kind: ImageKind) -> None:
         return
     setattr(user, kind.field, None)
     db.commit()
-    _delete_file(previous)
+    delete_file(previous)

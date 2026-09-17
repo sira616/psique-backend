@@ -27,6 +27,12 @@ class User(Base):
     # Cuentas de desarrollo: herramientas internas futuras. Solo se fija por script, nunca
     # desde la API.
     is_dev: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # Confirmación explícita de mayoría de edad para abrir libros +18. Es una declaración,
+    # no una verificación: no basta para subir el techo de contenido.
+    adult_confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Reincidencia en cierres por la política de contenido: hasta esta fecha no se empieza,
+    # continúa ni relee ninguna partida. Ver `conduct_service`.
+    restricted_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     # Caché del saldo: la verdad está en `obolo_movements`. Se toca solo desde
     # `app.services.economy_service`, en la misma transacción que su movimiento.

@@ -39,6 +39,7 @@ class StoryCardOut(BaseModel):
     author: AuthorOut
     isMine: bool
     publishedAt: datetime | None
+    adult: bool = False
 
 
 class ExplorePageOut(BaseModel):

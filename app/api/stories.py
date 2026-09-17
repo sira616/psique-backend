@@ -9,10 +9,12 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.rate_limit import RateLimiter
 from app.core.security import get_current_user
-from app.models.story import STORY_ACTIVE
+from app.api import policy
+from app.models.story import STORY_ACTIVE, STORY_CLOSED
 from app.models.user import User
 from app.schemas.story import CharacterOut, ChatIn, StoryCreateIn, StoryOut, StorySummaryOut
-from app.services import chat_stream_service, economy_service, story_service
+from app.services import chat_stream_service, conduct_service, economy_service, story_service, usage_service
+from app.story import content_policy
 from app.story import scene as scene_rules
 
 router = APIRouter(prefix="/api", tags=["stories"])
@@ -67,6 +69,10 @@ def create_story(
     profile = story_service.resolve_profile(db, user.id, payload.characterId)
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ese personaje no existe.")
+    # También cuando ya hay partida activa: devolverla sería dejar continuarla.
+    blocked = policy.reading_gate(db, user, payload.characterId)
+    if blocked is not None:
+        return blocked
     try:
         story, created = story_service.start_story(db, user, payload.characterId, profile)
     except economy_service.InsufficientObolosError:
@@ -98,6 +104,11 @@ def chat(
     story = _owned(db, user, story_id)
     # Antes de abrir el stream y de validar nada más: una historia congelada no guarda el
     # mensaje, no llama al LLM y no mueve afinidad, turnos ni memoria.
+    if story.status == STORY_CLOSED:
+        return policy.story_closed_response(story, conduct_service.restricted_until(user))
+    blocked = policy.reading_gate(db, user, story.character_id)
+    if blocked is not None:
+        return blocked
     if story.status != STORY_ACTIVE:
         return story_archived_response()
     if story.pending_phase is not None:
@@ -123,8 +134,28 @@ def chat(
             )
     text = choice.message if choice else payload.message.strip()
 
+    # Antes del stream y antes de guardar nada: lo que no pasa la política no llega al LLM,
+    # no se guarda y no puntúa. Las sugerencias también, por si el LLM coló algo en una.
+    verdict = content_policy.classify_input(text)
+    action = content_policy.consequence(verdict.level, adult_book=story_service.is_adult_book(db, story.character_id))
+    if action is content_policy.Action.CLOSE:
+        until = conduct_service.close_story(db, user, story, verdict)
+        return policy.story_closed_response(story, until)
+    if action is content_policy.Action.REDIRECT:
+        profile = story_service.story_profile(db, story)
+        return policy.content_redirected_response(
+            content_policy.redirect_reply(profile.nombre if profile else "El personaje")
+        )
+
+    # Lo último antes del stream: solo gasta cupo lo que de verdad va a llegar al modelo.
+    usage_day = usage_service.local_today()
+    # Antes de reservar: el commit de la reserva caduca `story` y el stream corre ya sin sesión.
+    target_id = story.id
+    if not usage_service.reserve_turn(db, user):
+        return JSONResponse(status_code=status.HTTP_429_TOO_MANY_REQUESTS, content=usage_service.limit_reached_body())
+
     def event_source() -> Iterator[bytes]:
-        for event in chat_stream_service.stream_turn(story.id, text, choice):
+        for event in chat_stream_service.stream_turn(target_id, text, choice, usage_day=usage_day):
             yield _sse(event)
 
     return StreamingResponse(
@@ -138,6 +169,11 @@ def chat(
 def unlock_chapter(story_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Paga el capítulo pendiente. Devuelve lo mismo que el evento SSE `state` más el saldo."""
     story = _owned(db, user, story_id)
+    if story.status == STORY_CLOSED:
+        return policy.story_closed_response(story, conduct_service.restricted_until(user))
+    blocked = policy.reading_gate(db, user, story.character_id)
+    if blocked is not None:
+        return blocked
     try:
         transition, balance = story_service.unlock_chapter(db, user, story)
     except story_service.StoryArchivedError:

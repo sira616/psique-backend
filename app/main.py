@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 import app.models  # noqa: F401 — registra los modelos en Base.metadata
-from app.api import auth, books, custom_stories, economy, explore, me, profiles, stories
+from app.api import auth, books, custom_stories, dev, economy, explore, me, profiles, stories
 from app.core.config import IS_PRODUCTION, settings
 from app.core.headers import SecurityHeadersMiddleware
 from app.core.migrations import upgrade_to_head
@@ -54,6 +54,7 @@ app.include_router(explore.router)
 app.include_router(profiles.router)
 app.include_router(economy.router)
 app.include_router(books.router)
+app.include_router(dev.router)
 
 # El registro de tipos de Windows no conoce .webp: sin esto se serviría como
 # application/octet-stream y, con nosniff, el navegador no lo pintaría.

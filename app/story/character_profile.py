@@ -50,6 +50,9 @@ class CharacterProfile(BaseModel):
     secretos: tuple[SecretText, ...] = Field(default=(), max_length=5)
     # Solo cuenta en los predefinidos: en los propios manda `story_blueprints.free_first_read`.
     free_first_read: bool = True
+    # +18: solo para cuentas que confirmaron ser mayores de edad. En los propios manda
+    # `story_blueprints.adult`. No sube el techo de lo que se genera.
+    adult: bool = False
 
     @field_validator("edad")
     @classmethod

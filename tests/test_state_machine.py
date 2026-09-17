@@ -132,3 +132,40 @@ def test_un_perdon_de_otra_fase_no_resuelve_el_conflicto():
     state = sm.derive_state(events)
     assert state.decisions == frozenset()
     assert sm.next_transition(state) is None
+
+
+def _turnos(*turnos: list[tuple[str, str]]) -> list[sm.Event]:
+    eventos = []
+    for n, contenido in enumerate(turnos, start=1):
+        eventos.append(sm.Event("turno", "mensaje", n))
+        eventos.extend(sm.Event(kind, name, n) for kind, name in contenido)
+    return eventos
+
+
+def test_la_afinidad_no_acumula_deuda_por_debajo_de_cero():
+    # Regresión de la partida real de lucia: tres turnos groseros la dejaron a 0 y, al
+    # recortar solo al final, por debajo seguía en negativo y los buenos turnos no se notaban.
+    groseros = [("senal", "grosero"), ("senal", "presiona_limite")]
+    eventos = _turnos(groseros, groseros, groseros, groseros)
+    assert sm.compute_affinity(eventos) == 0
+    eventos.append(sm.Event("turno", "mensaje", 5))
+    eventos.append(sm.Event("senal", "cumplido", 5))
+    assert sm.compute_affinity(eventos) == sm.SIGNAL_WEIGHTS["cumplido"]
+
+
+def test_la_afinidad_no_guarda_colchon_por_encima_de_100():
+    eventos = [sm.Event("ajuste", "dev", 0, weight=150), sm.Event("senal", "grosero", 1)]
+    assert sm.compute_affinity(eventos) == sm.MAX_AFFINITY + sm.SIGNAL_WEIGHTS["grosero"]
+
+
+def test_ajuste_de_dev_suma_su_peso_y_sin_peso_no_cuenta():
+    assert sm.compute_affinity([sm.Event("ajuste", "dev", 0, weight=15)]) == sm.BASE_AFFINITY + 15
+    assert sm.compute_affinity([sm.Event("ajuste", "dev", 0)]) == sm.BASE_AFFINITY
+
+
+def test_las_decisiones_de_fases_anteriores_siguen_contando_en_la_afinidad():
+    # Las reglas de transición solo miran las decisiones de la fase en curso, pero la
+    # afinidad no pierde lo ganado antes de una transición.
+    eventos = [sm.Event("decision", "sincerarse", 1), sm.Event("transicion", "confianza", 1)]
+    assert sm.compute_affinity(eventos) == sm.BASE_AFFINITY + sm.INTENT_WEIGHTS["sincerarse"]
+    assert sm.derive_state(eventos).decisions == frozenset()

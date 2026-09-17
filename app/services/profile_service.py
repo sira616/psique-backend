@@ -114,7 +114,13 @@ def update(db: DbSession, user: User, patch: ProfilePatchIn) -> None:
 
 
 def _published(db: DbSession, owner: User, viewer: User):
-    rows, _ = custom_story_service.list_public(db, limit=SHELF_LIMIT, offset=0, owner_id=owner.id)
+    rows, _ = custom_story_service.list_public(
+        db,
+        limit=SHELF_LIMIT,
+        offset=0,
+        owner_id=owner.id,
+        include_adult=viewer.id == owner.id or viewer.adult_confirmed_at is not None,
+    )
     return [custom_story_service.card_out(b, author, viewer.id) for b, author in rows]
 
 

@@ -55,6 +55,8 @@ class BookViewerOut(BaseModel):
     rereadCost: int
     canReview: bool
     myReview: ReviewOut | None
+    # Libro +18 y cuenta sin confirmar: leer, continuar y releer darán 403 `adult_required`.
+    adultRequired: bool
 
 
 class BookOut(BaseModel):
@@ -74,6 +76,7 @@ class BookOut(BaseModel):
     isPublic: bool
     chapterCount: int
     freeFirstRead: bool
+    adult: bool
     readCost: int
     publishedAt: datetime | None
     createdAt: datetime | None
@@ -83,8 +86,10 @@ class BookOut(BaseModel):
 
 class HistoryItemOut(BaseModel):
     storyId: str
+    status: Literal["archivada", "cerrada"]
     startedAt: datetime | None
     archivedAt: datetime | None
+    closedAt: datetime | None
     phase: str
     phaseLabel: str
     phaseIndex: int
@@ -101,6 +106,7 @@ class BookCardOut(BaseModel):
     tone: str | None
     author: AuthorOut | None
     readers: int
+    adult: bool
 
 
 class ReviewIn(BaseModel):

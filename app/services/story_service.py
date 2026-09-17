@@ -36,6 +36,7 @@ def character_out(profile: CharacterProfile) -> CharacterOut:
         tagline=profile.tagline,
         traits=list(profile.personalidad),
         scenario=profile.escenario_inicial,
+        adult=profile.adult,
     )
 
 
@@ -50,6 +51,14 @@ def resolve_profile(db: DbSession, user_id: str, character_id: str) -> Character
     if character_id.startswith(custom_story_service.CUSTOM_PREFIX):
         return custom_story_service.resolve_profile(db, user_id, character_id)
     return get_character(character_id)
+
+
+def is_adult_book(db: DbSession, character_id: str) -> bool:
+    if character_id.startswith(custom_story_service.CUSTOM_PREFIX):
+        blueprint = custom_story_service.blueprint_for(db, character_id)
+        return bool(blueprint and blueprint.adult)
+    profile = get_character(character_id)
+    return bool(profile and profile.adult)
 
 
 def story_profile(db: DbSession, story: Story) -> CharacterProfile | None:
@@ -189,7 +198,7 @@ def load_events(db: DbSession, story_id: str) -> list[sm.Event]:
     rows = db.scalars(
         select(StoryEvent).where(StoryEvent.story_id == story_id).order_by(StoryEvent.id)
     )
-    return [sm.Event(kind=r.kind, name=r.name, turn=r.turn) for r in rows]
+    return [sm.Event(kind=r.kind, name=r.name, turn=r.turn, weight=r.weight) for r in rows]
 
 
 def current_scene(story: Story, profile: CharacterProfile | None = None) -> scene_rules.SceneSuggestions:
@@ -345,6 +354,8 @@ def story_out(db: DbSession, story: Story) -> StoryOut:
         createdAt=story.created_at,
         status=story.status,
         archivedAt=story.archived_at,
+        closedAt=story.closed_at,
+        closedReason=story.closed_reason,
     )
 
 

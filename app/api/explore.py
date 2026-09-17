@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.profile import ExplorePageOut
+from app.services import conduct_service
 from app.services import custom_story_service as svc
 
 router = APIRouter(prefix="/api/explore", tags=["explore"])
@@ -29,7 +30,9 @@ def explore(
     alguien publica mientras se pagina, una tarjeta puede repetirse en la página siguiente;
     el cliente deduplica por `id`.
     """
-    rows, has_more = svc.list_public(db, limit=limit, offset=offset, mode=mode)
+    rows, has_more = svc.list_public(
+        db, limit=limit, offset=offset, mode=mode, include_adult=conduct_service.adult_confirmed(user)
+    )
     return ExplorePageOut(
         items=[svc.card_out(b, author, user.id) for b, author in rows],
         limit=limit,

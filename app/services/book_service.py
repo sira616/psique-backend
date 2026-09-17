@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
-from app.models.story import STORY_ARCHIVED, BookReview, Story, StoryBlueprint
+from app.models.story import STORY_ARCHIVED, STORY_CLOSED, BookReview, Story, StoryBlueprint
 from app.models.user import User
 from app.schemas.book import (
     BookCardOut,
@@ -29,7 +29,7 @@ from app.schemas.book import (
     ReviewOut,
 )
 from app.schemas.profile import AuthorOut
-from app.services import custom_story_service, media_service, story_service
+from app.services import conduct_service, custom_story_service, media_service, story_service
 from app.story import state_machine as sm
 from app.story.character_profile import get_character, load_characters
 from app.story.content_policy import check_user_text
@@ -51,6 +51,7 @@ class Book:
     free_first_read: bool
     published_at: datetime | None
     created_at: datetime | None
+    adult: bool = False
 
 
 def author_out(user: User) -> AuthorOut:
@@ -66,7 +67,7 @@ def _predefined(book_id: str) -> Book | None:
     return Book(
         id=book_id, origin="psique", mode=None, title=profile.nombre, hook=profile.tagline,
         character_name=profile.nombre, tone=profile.tono, owner=None, is_public=True,
-        free_first_read=profile.free_first_read, published_at=None, created_at=None,
+        free_first_read=profile.free_first_read, published_at=None, created_at=None, adult=profile.adult,
     )
 
 
@@ -86,6 +87,7 @@ def _from_blueprint(blueprint: StoryBlueprint, owner: User) -> Book:
         free_first_read=blueprint.free_first_read,
         published_at=blueprint.published_at,
         created_at=blueprint.created_at,
+        adult=blueprint.adult,
     )
 
 
@@ -171,6 +173,7 @@ def book_out(db: DbSession, viewer: User, book: Book) -> BookOut:
         isPublic=book.is_public,
         chapterCount=len(sm.PHASE_ORDER),
         freeFirstRead=book.free_first_read,
+        adult=book.adult,
         readCost=settings.READ_COST,
         publishedAt=book.published_at,
         createdAt=book.created_at,
@@ -188,16 +191,21 @@ def book_out(db: DbSession, viewer: User, book: Book) -> BookOut:
             rereadCost=settings.READ_COST,
             canReview=has_read and not is_author(book, viewer),
             myReview=review_out(mine, viewer, viewer) if mine else None,
+            adultRequired=book.adult and not conduct_service.adult_confirmed(viewer),
         ),
     )
 
 
 def history(db: DbSession, viewer: User, book: Book) -> list[HistoryItemOut]:
-    """Solo las partidas archivadas de quien pregunta: el historial de otra cuenta no sale."""
+    """Partidas archivadas y cerradas de quien pregunta: el historial de otra cuenta no sale."""
     stories = db.scalars(
         select(Story)
-        .where(Story.user_id == viewer.id, Story.character_id == book.id, Story.status == STORY_ARCHIVED)
-        .order_by(Story.archived_at.desc(), Story.created_at.desc(), Story.id)
+        .where(
+            Story.user_id == viewer.id,
+            Story.character_id == book.id,
+            Story.status.in_((STORY_ARCHIVED, STORY_CLOSED)),
+        )
+        .order_by(func.coalesce(Story.archived_at, Story.closed_at).desc(), Story.created_at.desc(), Story.id)
     )
     items = []
     for story in stories:
@@ -205,8 +213,10 @@ def history(db: DbSession, viewer: User, book: Book) -> list[HistoryItemOut]:
         items.append(
             HistoryItemOut(
                 storyId=story.id,
+                status=story.status,
                 startedAt=story.created_at,
                 archivedAt=story.archived_at,
+                closedAt=story.closed_at,
                 phase=progress.phase,
                 phaseLabel=progress.phaseLabel,
                 phaseIndex=progress.phaseIndex,
@@ -225,7 +235,7 @@ def _norm(text: str | None) -> str:
     return "".join(c for c in folded if not unicodedata.combining(c))
 
 
-def recommended(db: DbSession, book: Book) -> list[BookCardOut]:
+def recommended(db: DbSession, book: Book, viewer: User) -> list[BookCardOut]:
     """Hasta seis libros parecidos, solo predefinidos o públicos sin borrar (tampoco los
     privados de quien mira: la lista es la misma para todos).
 
@@ -242,6 +252,8 @@ def recommended(db: DbSession, book: Book) -> list[BookCardOut]:
     ).all()
     candidates += [_from_blueprint(b, u) for b, u in rows]
     candidates = [c for c in candidates if c.id != book.id]
+    if not conduct_service.adult_confirmed(viewer):
+        candidates = [c for c in candidates if not c.adult]
     readers = _readers(db)
 
     tone = _norm(book.tone)
@@ -260,7 +272,7 @@ def recommended(db: DbSession, book: Book) -> list[BookCardOut]:
     return [
         BookCardOut(
             id=c.id, origin=c.origin, mode=c.mode, title=c.title, hook=c.hook, tone=c.tone,
-            author=author_out(c.owner) if c.owner else None, readers=readers.get(c.id, 0),
+            author=author_out(c.owner) if c.owner else None, readers=readers.get(c.id, 0), adult=c.adult,
         )
         for c in candidates[:RECOMMENDED_LIMIT]
     ]

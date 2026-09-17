@@ -70,7 +70,9 @@ def update_custom_story(
     if blueprint is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND)
     return svc.to_out(
-        svc.update_settings(db, blueprint, is_public=payload.isPublic, free_first_read=payload.freeFirstRead)
+        svc.update_settings(
+            db, blueprint, is_public=payload.isPublic, free_first_read=payload.freeFirstRead, adult=payload.adult
+        )
     )
 
 

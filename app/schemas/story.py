@@ -25,6 +25,7 @@ class CharacterOut(BaseModel):
     tagline: str | None
     traits: list[str] | None
     scenario: str | None
+    adult: bool = False
 
 
 class QuickChoiceOut(BaseModel):
@@ -70,8 +71,10 @@ class StoryOut(BaseModel):
     messages: list[MessageOut]
     facts: list[FactOut]
     createdAt: datetime | None
-    status: Literal["activa", "archivada"]
+    status: Literal["activa", "archivada", "cerrada"]
     archivedAt: datetime | None
+    closedAt: datetime | None = None
+    closedReason: str | None = None
 
 
 class StorySummaryOut(BaseModel):
@@ -80,8 +83,10 @@ class StorySummaryOut(BaseModel):
     characterName: str
     state: StoryStateOut
     updatedAt: datetime | None
-    status: Literal["activa", "archivada"]
+    status: Literal["activa", "archivada", "cerrada"]
     archivedAt: datetime | None
+    closedAt: datetime | None = None
+    closedReason: str | None = None
 
 
 class StoryCreateIn(BaseModel):
