@@ -113,16 +113,22 @@ def test_las_transiciones_quedan_registradas_con_su_razon(client, fake_llm):
 def test_quick_choice_usa_el_texto_del_servidor_y_puntua(client, fake_llm):
     headers = auth_headers(client)
     story = _new_story(client, headers)
-    state = dict(_chat(client, headers, story["id"], choiceId="preguntar_trabajo"))["state"]
-    assert state["affinity"] == sm.BASE_AFFINITY + 2
-    assert fake_llm.stream_calls[0][1][-1]["content"].startswith("Cuéntame")
+    eleccion = story["state"]["quickChoices"][0]
+    assert eleccion["message"].startswith("Cuéntame")
+
+    state = dict(_chat(client, headers, story["id"], choiceId=eleccion["id"]))["state"]
+    assert state["affinity"] == sm.BASE_AFFINITY + sm.INTENT_WEIGHTS["preguntar"]
+    assert fake_llm.stream_calls[0][1][-1]["content"] == eleccion["message"]
+    detalle = client.get(f"/api/stories/{story['id']}", headers=headers).json()
+    assert detalle["messages"][1]["content"] == eleccion["message"]
 
 
-def test_quick_choice_de_otra_fase_es_422(client, fake_llm):
+def test_quick_choice_desconocida_es_422(client, fake_llm):
     headers = auth_headers(client)
     story = _new_story(client, headers)
-    resp = client.post(f"/api/stories/{story['id']}/chat", json={"choiceId": "reconciliar"}, headers=headers)
-    assert resp.status_code == 422
+    for choice_id in ("reconciliar", "preguntar_trabajo", "t9s1"):
+        resp = client.post(f"/api/stories/{story['id']}/chat", json={"choiceId": choice_id}, headers=headers)
+        assert resp.status_code == 422
     assert not fake_llm.stream_calls
 
 

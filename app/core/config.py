@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # --- Contexto de la historia ---
     # Mensajes literales que ve el modelo; lo anterior entra solo como resumen.
     CONTEXT_MESSAGES: int = 20
+    # Mensajes fuera de la ventana sin resumir que disparan un plegado del resumen. Con
+    # pocos se paga una llamada casi por turno; con muchos el hueco recortado crece.
+    SUMMARY_BATCH_MESSAGES: int = 10
 
     ALLOWED_ORIGINS: list[str] = [
         "http://localhost:5173",

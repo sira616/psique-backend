@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session as DbSession
+from sqlalchemy.orm import Session as DbSession, object_session
 
 from app.core.config import settings
 from app.models.story import STORY_ACTIVE, STORY_ARCHIVED, MemoryFact, Message, Story, StoryEvent
@@ -20,6 +20,7 @@ from app.schemas.story import (
     StoryStateOut,
     StorySummaryOut,
 )
+from app.story import scene as scene_rules
 from app.story import state_machine as sm
 from app.story.character_profile import CharacterProfile, get_character, load_characters
 
@@ -107,6 +108,10 @@ def _add_story(db: DbSession, user: User, character_id: str, profile: CharacterP
         summary="",
         status=STORY_ACTIVE,
     )
+    # Primer turno: aún no hay extracción, así que escena y sugerencias salen de la fase.
+    initial = scene_rules.fallback(sm.Phase.CONOCERSE, profile.nombre, 0)
+    for column, value in scene_rules.column_values(initial).items():
+        setattr(story, column, value)
     # Primero el cobro: sin saldo no llega a escribirse nada.
     if cost > 0:
         economy_service.spend(db, user.id, cost, "lectura", story.id)
@@ -187,8 +192,20 @@ def load_events(db: DbSession, story_id: str) -> list[sm.Event]:
     return [sm.Event(kind=r.kind, name=r.name, turn=r.turn) for r in rows]
 
 
+def current_scene(story: Story, profile: CharacterProfile | None = None) -> scene_rules.SceneSuggestions:
+    """Escena y sugerencias vigentes. El perfil solo hace falta para partidas anteriores a
+    las escenas, que no tienen nada guardado."""
+    if story.suggestions is None and profile is None:
+        db = object_session(story)
+        profile = story_profile(db, story) if db is not None else None
+    return scene_rules.load(story, profile.nombre if profile else None)
+
+
 def state_out(story: Story) -> StoryStateOut:
     phase = sm.Phase(story.phase)
+    current = current_scene(story)
+    # Una archivada solo se lee: no hay nada que sugerir.
+    choices = current.items if story.status == STORY_ACTIVE else ()
     return StoryStateOut(
         phase=phase.value,
         phaseLabel=sm.PHASE_LABELS[phase],
@@ -196,7 +213,8 @@ def state_out(story: Story) -> StoryStateOut:
         phaseCount=len(sm.PHASE_ORDER),
         affinity=story.affinity,
         turnCount=story.turn_count,
-        quickChoices=[QuickChoiceOut(id=c.id, label=c.label) for c in sm.choices_for(phase)],
+        scene=current.scene,
+        quickChoices=[QuickChoiceOut(id=c.id, label=c.label, message=c.message) for c in choices],
         chapter_locked=story.pending_phase is not None,
         next_phase=story.pending_phase,
         chapter_cost=settings.CHAPTER_COST,
@@ -220,7 +238,11 @@ def state_payload(story: Story, transition: sm.Transition | None, signals: list[
 
 
 def apply_turn_state(
-    db: DbSession, story: Story, state: sm.StoryState, transition: sm.Transition | None
+    db: DbSession,
+    story: Story,
+    state: sm.StoryState,
+    transition: sm.Transition | None,
+    scene: scene_rules.SceneSuggestions | None = None,
 ) -> bool:
     """Lleva a la historia lo que calculó la máquina de estados, con los capítulos de pago.
 
@@ -234,6 +256,8 @@ def apply_turn_state(
     aplicó; si no, quien llama deshace lo que ese turno aún no ha confirmado.
     """
     values = {"affinity": state.affinity, "phase": state.phase.value}
+    if scene is not None:
+        values |= scene_rules.column_values(scene)
     if transition is not None:
         values["pending_phase"] = transition.to_phase.value
     result = db.execute(
@@ -265,10 +289,19 @@ def unlock_chapter(db: DbSession, user: User, story: Story) -> tuple[sm.Transiti
     if target is None:
         raise ChapterNotLockedError()
     from_phase = sm.Phase(story.phase)
+    values = {"phase": target, "pending_phase": None}
+    current = current_scene(story)
+    if current.origin == scene_rules.ORIGIN_PHASE:
+        # Las de reserva eran de la fase que se cierra; las de la escena siguen valiendo.
+        profile = story_profile(db, story)
+        name = profile.nombre if profile else None
+        keep = current.scene if current.scene != scene_rules.phase_scene_title(from_phase, name) else None
+        renewed = scene_rules.fallback(sm.Phase(target), name, story.turn_count, keep)
+        values |= scene_rules.column_values(renewed)
     claimed = db.execute(
         update(Story)
         .where(Story.id == story.id, Story.pending_phase == target, Story.status == STORY_ACTIVE)
-        .values(phase=target, pending_phase=None)
+        .values(**values)
         .execution_options(synchronize_session=False)
     )
     if claimed.rowcount != 1:

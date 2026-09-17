@@ -30,6 +30,8 @@ class CharacterOut(BaseModel):
 class QuickChoiceOut(BaseModel):
     id: str
     label: str
+    # Lo que se guarda y se manda al modelo si se elige: el cliente lo enseña tal cual.
+    message: str
 
 
 class MessageOut(BaseModel):
@@ -51,6 +53,8 @@ class StoryStateOut(BaseModel):
     phaseCount: int
     affinity: int
     turnCount: int
+    # Título de la escena o tema en curso, al que responden las sugerencias.
+    scene: str | None = None
     quickChoices: list[QuickChoiceOut]
     # Capítulo = fase. Bloqueado: la fase siguiente ya se ganó y espera a pagarse.
     chapter_locked: bool = False
@@ -86,7 +90,7 @@ class StoryCreateIn(BaseModel):
 
 
 class ChatIn(BaseModel):
-    """O texto libre o una de las sugerencias de la fase, nunca las dos: con las dos no
+    """O texto libre o una de las sugerencias vigentes, nunca las dos: con las dos no
     habría forma de saber cuál de las dos cuenta como decisión."""
 
     message: str | None = Field(default=None, min_length=1, max_length=MAX_MESSAGE_LEN)

@@ -80,7 +80,8 @@ def test_chat_con_capitulo_bloqueado_es_409_sin_llm_ni_cambios(client, fake_llm)
     fake_llm.generate_calls.clear()
     antes = _foto(story["id"])
 
-    for cuerpo in ({"message": "Sigo hablando"}, {"choiceId": "preguntar_trabajo"}):
+    eleccion = client.get(f"/api/stories/{story['id']}", headers=headers).json()["state"]["quickChoices"][0]["id"]
+    for cuerpo in ({"message": "Sigo hablando"}, {"choiceId": eleccion}):
         resp = client.post(f"/api/stories/{story['id']}/chat", json=cuerpo, headers=headers)
         assert resp.status_code == 409
         assert resp.headers["content-type"].startswith("application/json")
@@ -107,7 +108,9 @@ def test_un_turno_en_curso_no_suma_si_otro_bloquea_el_capitulo(client, fake_llm,
     monkeypatch.setattr("app.llm.router.generate", bloquear_durante_la_extraccion)
     fake_llm.extraction = {"hechos": {}, "senales": ["cumplido", "vulnerabilidad"]}
 
-    resp = client.post(f"/api/stories/{story['id']}/chat", json={"choiceId": "preguntar_trabajo"}, headers=headers)
+    fake_llm.extraction |= {"scene": "Otra escena", "suggestions": []}
+    eleccion = story["state"]["quickChoices"][0]["id"]
+    resp = client.post(f"/api/stories/{story['id']}/chat", json={"choiceId": eleccion}, headers=headers)
     assert resp.status_code == 200
     state = dict(parse_sse(resp.text))["state"]
     assert state["chapter_locked"] is True
@@ -117,6 +120,9 @@ def test_un_turno_en_curso_no_suma_si_otro_bloquea_el_capitulo(client, fake_llm,
     with SessionLocal() as db:
         tipos = set(db.scalars(select(StoryEvent.kind).where(StoryEvent.story_id == story["id"])))
     assert tipos == {"turno"}
+    # Tampoco escribe escena ni sugerencias: siguen las del turno anterior.
+    assert state["scene"] != "Otra escena"
+    assert state["quickChoices"][0]["id"] == eleccion
 
 
 def test_partida_archivada_no_admite_chat_ni_desbloqueo(client, fake_llm):

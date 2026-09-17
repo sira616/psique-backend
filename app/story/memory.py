@@ -5,7 +5,8 @@ existen (`FACT_KEYS`), qué forma tiene cada valor y qué se guarda. Una clave i
 se ignora y un valor inválido se descarta solo, sin llevarse por delante los válidos.
 
 La misma llamada devuelve las señales para la máquina de estados, también contra su
-propia lista blanca (`state_machine.SIGNAL_WEIGHTS`): una llamada por turno y no dos.
+propia lista blanca (`state_machine.SIGNAL_WEIGHTS`), y la escena en curso con sus
+sugerencias (ver `app.story.scene`): una llamada por turno y no varias.
 """
 from __future__ import annotations
 
@@ -21,8 +22,9 @@ from sqlalchemy.orm import Session as DbSession
 from app.llm import router as llm_router
 from app.llm.prompts.story import EXTRACTION_SYSTEM_PROMPT, build_extraction_input
 from app.models.story import MemoryFact
+from app.story import scene as scene_rules
 from app.story.guardrail import contains_sensitive
-from app.story.state_machine import MAX_SIGNALS_PER_TURN, SIGNAL_WEIGHTS
+from app.story.state_machine import MAX_SIGNALS_PER_TURN, SIGNAL_WEIGHTS, Phase, QuickChoice
 
 # Clave → cuántos valores se guardan como mucho. `nombre` es único: el nuevo sustituye.
 FACT_KEYS: dict[str, int] = {
@@ -62,6 +64,9 @@ _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 class TurnExtraction:
     facts: dict[str, list[str]]
     signals: list[str]
+    # None si no vino o no pasó la validación: quien lo usa decide la reserva.
+    scene: str | None = None
+    suggestions: tuple[QuickChoice, ...] | None = None
 
 
 EMPTY = TurnExtraction(facts={}, signals=[])
@@ -113,17 +118,36 @@ def parse_extraction(raw_text: str | None) -> TurnExtraction:
     return TurnExtraction(
         facts=validate_facts(parsed.get("hechos")),
         signals=validate_signals(parsed.get("senales")),
+        scene=scene_rules.validate_scene(parsed.get("scene")),
+        suggestions=scene_rules.validate_suggestions(parsed.get("suggestions")),
     )
 
 
-def extract_turn(previous_reply: str, user_message: str) -> TurnExtraction:
+def extract_turn(
+    previous_reply: str,
+    user_message: str,
+    reply: str = "",
+    *,
+    previous_scene: str | None = None,
+    phase: Phase | None = None,
+    character_name: str | None = None,
+) -> TurnExtraction:
     """Devuelve vacío si el modelo no coopera: un turno sin extraer no rompe la historia,
     solo deja de sumar."""
+    content = build_extraction_input(
+        previous_reply,
+        user_message,
+        reply,
+        previous_scene=previous_scene,
+        phase=phase,
+        character_name=character_name,
+    )
     try:
         raw = llm_router.generate(
             EXTRACTION_SYSTEM_PROMPT,
-            [{"role": "user", "content": build_extraction_input(previous_reply, user_message)}],
-            max_tokens=512,
+            [{"role": "user", "content": content}],
+            # Las tres sugerencias ocupan bastante más que hechos y señales.
+            max_tokens=1024,
         )
     except llm_router.LLMUnavailableError:
         return EMPTY

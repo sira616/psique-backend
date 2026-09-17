@@ -83,52 +83,83 @@ TURN_BONUS_EVERY = 2
 TURN_BONUS_CAP = 15
 
 
+# Intenciones que puede tener una sugerencia, con su peso en la afinidad. Las sugerencias
+# por escena las redacta el LLM, pero solo elige la intención de esta lista: el peso lo pone
+# el código. El evento `decision` se guarda con la intención, así que cambiar un peso aquí
+# recalcula también las historias existentes.
+INTENT_WEIGHTS: dict[str, int] = {
+    "preguntar": 2,
+    "escuchar": 2,
+    "presentarse": 1,
+    "humor": 1,
+    "cumplido": 2,
+    "compartir": 3,
+    "sincerarse": 4,
+    "proponer_plan": 3,
+    "dar_espacio": 2,
+    "cambiar_tema": -1,
+    "pedir_perdon": 4,
+    "reconciliar": 5,
+    "tomar_distancia": -3,
+    "agradecer": 1,
+    "hablar_futuro": 2,
+    "despedirse": 0,
+}
+
+# Ids de las sugerencias fijas anteriores a las intenciones: siguen en eventos ya guardados.
+LEGACY_CHOICE_INTENTS: dict[str, str] = {
+    "preguntar_trabajo": "preguntar",
+    "hacer_broma": "humor",
+    "compartir_recuerdo": "compartir",
+    "proponer_paseo": "proponer_plan",
+    "preguntar_sueno": "preguntar",
+    "proponer_futuro": "hablar_futuro",
+}
+
+
 @dataclass(frozen=True)
 class QuickChoice:
-    id: str
+    intent: str
     label: str
     message: str
-    weight: int = 0
+
+    @property
+    def weight(self) -> int:
+        return INTENT_WEIGHTS[self.intent]
 
 
-# Sugerencias de acción por fase, fijadas por reglas. El cliente solo manda el `id`; el
-# texto y el peso salen de aquí, así nadie puede inventarse una decisión que puntúe.
+# Sugerencias por fase: la reserva cuando el LLM no da sugerencias válidas para la escena.
 QUICK_CHOICES: dict[Phase, tuple[QuickChoice, ...]] = {
     Phase.CONOCERSE: (
-        QuickChoice("preguntar_trabajo", "Preguntar por su oficio", "Cuéntame, ¿cómo acabaste dedicándote a esto?", 2),
-        QuickChoice("hacer_broma", "Romper el hielo con humor", "*Sonrío* Tengo la sensación de que no es la primera vez que te pasa algo así.", 1),
-        QuickChoice("presentarse", "Presentarte", "Por cierto, no me he presentado. Es un placer conocerte.", 1),
+        QuickChoice("preguntar", "Preguntar por su oficio", "Cuéntame, ¿cómo acabaste dedicándote a esto?"),
+        QuickChoice("humor", "Romper el hielo con humor", "*Sonrío* Tengo la sensación de que no es la primera vez que te pasa algo así."),
+        QuickChoice("presentarse", "Presentarte", "Por cierto, no me he presentado. Es un placer conocerte."),
     ),
     Phase.CONFIANZA: (
-        QuickChoice("compartir_recuerdo", "Compartir un recuerdo", "Esto me recuerda a algo que me pasó hace tiempo... ¿te lo cuento?", 3),
-        QuickChoice("proponer_paseo", "Proponer un paseo", "¿Te apetece dar un paseo cuando acabes?", 3),
-        QuickChoice("preguntar_sueno", "Preguntar por sus sueños", "Si pudieras cambiar una cosa de tu vida mañana, ¿cuál sería?", 2),
+        QuickChoice("compartir", "Compartir un recuerdo", "Esto me recuerda a algo que me pasó hace tiempo... ¿te lo cuento?"),
+        QuickChoice("proponer_plan", "Proponer un paseo", "¿Te apetece dar un paseo cuando acabes?"),
+        QuickChoice("preguntar", "Preguntar por sus sueños", "Si pudieras cambiar una cosa de tu vida mañana, ¿cuál sería?"),
     ),
     Phase.TENSION: (
-        QuickChoice("sincerarse", "Sincerarte", "Llevo un rato queriendo decirte algo y no sé muy bien cómo.", 4),
-        QuickChoice("dar_espacio", "Darle espacio", "No hace falta que digas nada ahora. Estoy bien así.", 2),
-        QuickChoice("cambiar_tema", "Cambiar de tema", "*Carraspeo* Bueno... ¿y qué tal el día?", -1),
+        QuickChoice("sincerarse", "Sincerarte", "Llevo un rato queriendo decirte algo y no sé muy bien cómo."),
+        QuickChoice("dar_espacio", "Darle espacio", "No hace falta que digas nada ahora. Estoy bien así."),
+        QuickChoice("cambiar_tema", "Cambiar de tema", "*Carraspeo* Bueno... ¿y qué tal el día?"),
     ),
     Phase.CONFLICTO: (
-        QuickChoice("reconciliar", "Buscar la reconciliación", "No quiero que esto se quede así. ¿Podemos hablarlo con calma?", 5),
-        QuickChoice("pedir_perdon", "Pedir perdón", "Creo que te he hecho daño sin querer. Lo siento de verdad.", 4),
-        QuickChoice("tomar_distancia", "Tomar distancia", "Quizá necesitemos un poco de tiempo cada uno.", -3),
+        QuickChoice("reconciliar", "Buscar la reconciliación", "No quiero que esto se quede así. ¿Podemos hablarlo con calma?"),
+        QuickChoice("pedir_perdon", "Pedir perdón", "Creo que te he hecho daño sin querer. Lo siento de verdad."),
+        QuickChoice("tomar_distancia", "Tomar distancia", "Quizá necesitemos un poco de tiempo cada uno."),
     ),
     Phase.DESENLACE: (
-        QuickChoice("proponer_futuro", "Hablar del futuro", "¿Y ahora qué? Porque yo no quiero que esto acabe aquí.", 2),
-        QuickChoice("agradecer", "Dar las gracias", "Gracias por dejarme entrar en tu mundo.", 1),
-        QuickChoice("despedirse", "Despedirse", "*Te abrazo* Cuídate mucho, ¿vale?", 0),
+        QuickChoice("hablar_futuro", "Hablar del futuro", "¿Y ahora qué? Porque yo no quiero que esto acabe aquí."),
+        QuickChoice("agradecer", "Dar las gracias", "Gracias por dejarme entrar en tu mundo."),
+        QuickChoice("despedirse", "Despedirse", "*Te abrazo* Cuídate mucho, ¿vale?"),
     ),
 }
 
 
 def choices_for(phase: Phase) -> tuple[QuickChoice, ...]:
     return QUICK_CHOICES[phase]
-
-
-def find_choice(phase: Phase, choice_id: str) -> QuickChoice | None:
-    # Solo las de la fase actual: una decisión de otra fase no aplica a esta escena.
-    return next((c for c in QUICK_CHOICES[phase] if c.id == choice_id), None)
 
 
 # --- Eventos y estado -----------------------------------------------------------------
@@ -159,11 +190,7 @@ class Transition:
 
 
 def _decision_weight(name: str) -> int:
-    for choices in QUICK_CHOICES.values():
-        for choice in choices:
-            if choice.id == name:
-                return choice.weight
-    return 0
+    return INTENT_WEIGHTS.get(LEGACY_CHOICE_INTENTS.get(name, name), 0)
 
 
 def compute_affinity(events: list[Event]) -> int:
@@ -203,6 +230,9 @@ def derive_state(events: list[Event]) -> StoryState:
         elif ev.kind == "transicion" and ev.name in Phase._value2member_map_:
             phase = Phase(ev.name)
             phase_start_turn = ev.turn
+            # Las reglas miran las decisiones de la fase en curso: un "perdón" de hace dos
+            # capítulos no resuelve el conflicto de ahora.
+            decisions.clear()
     return StoryState(
         phase=phase,
         affinity=compute_affinity(events),

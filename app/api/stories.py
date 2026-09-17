@@ -13,7 +13,7 @@ from app.models.story import STORY_ACTIVE
 from app.models.user import User
 from app.schemas.story import CharacterOut, ChatIn, StoryCreateIn, StoryOut, StorySummaryOut
 from app.services import chat_stream_service, economy_service, story_service
-from app.story import state_machine as sm
+from app.story import scene as scene_rules
 
 router = APIRouter(prefix="/api", tags=["stories"])
 
@@ -112,13 +112,14 @@ def chat(
 
     choice = None
     if payload.choiceId is not None:
-        choice = sm.find_choice(sm.Phase(story.phase), payload.choiceId)
+        # Solo las guardadas en la partida: el texto y la intención nunca vienen del cliente.
+        choice = scene_rules.find(story_service.current_scene(story), payload.choiceId)
         if choice is None:
             # Se valida antes de abrir el stream: un 422 limpio es mejor que un error a
-            # mitad de SSE, y una sugerencia de otra fase no puntúa en esta.
+            # mitad de SSE, y una sugerencia de un turno anterior ya no aplica.
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Esa opción no está disponible en esta fase.",
+                detail="Esa opción ya no está disponible.",
             )
     text = choice.message if choice else payload.message.strip()
 

@@ -48,8 +48,15 @@ class Story(Base):
     # "activa" | "archivada". Una archivada solo se lee: ni chat ni desbloqueos.
     status: Mapped[str] = mapped_column(String(12), default=STORY_ACTIVE, server_default=STORY_ACTIVE)
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    # Resumen rodante de lo que ya no cabe en la ventana de contexto.
+    # Resumen rodante de lo que ya no cabe en la ventana de contexto. Cubre los mensajes
+    # hasta `summary_upto_message_id` (null = aún ninguno). Ver `summary_service`.
     summary: Mapped[str] = mapped_column(Text, default="")
+    summary_upto_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Escena en curso y sus sugerencias ({origin, items: [{id, intent, label, message}]}),
+    # generadas en el turno `suggestions_turn`. Ver `app.story.scene`.
+    scene_title: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    suggestions: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    suggestions_turn: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

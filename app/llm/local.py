@@ -1,7 +1,7 @@
 """Cliente Ollama (local u Ollama Cloud), misma interfaz que `app.llm.cloud`.
 
 Sirve para un Ollama local (`OLLAMA_BASE_URL=http://localhost:11434`, sin API key) y
-para Ollama Cloud (`https://ollama.com/api` con `OLLAMA_API_KEY`): mismo `/api/chat`.
+para Ollama Cloud (`OLLAMA_BASE_URL=https://ollama.com`, sin `/api`, con `OLLAMA_API_KEY`): mismo `/api/chat`.
 """
 from __future__ import annotations
 

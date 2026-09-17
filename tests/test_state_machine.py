@@ -106,6 +106,29 @@ def test_cada_fase_tiene_escena_y_sugerencias():
         assert 2 <= len(sm.choices_for(phase)) <= 3
 
 
-def test_una_sugerencia_de_otra_fase_no_vale():
-    assert sm.find_choice(Phase.CONOCERSE, "reconciliar") is None
-    assert sm.find_choice(Phase.CONFLICTO, "reconciliar") is not None
+def test_las_sugerencias_de_reserva_usan_intenciones_de_la_lista():
+    for phase in Phase:
+        intents = [c.intent for c in sm.choices_for(phase)]
+        assert all(i in sm.INTENT_WEIGHTS for i in intents)
+        assert len(set(intents)) == len(intents)
+
+
+def test_el_peso_de_una_decision_sale_de_su_intencion():
+    assert sm.compute_affinity([Event("decision", "pedir_perdon", 1)]) == sm.BASE_AFFINITY + sm.INTENT_WEIGHTS["pedir_perdon"]
+    assert sm.compute_affinity([Event("decision", "tomar_distancia", 1)]) == sm.BASE_AFFINITY - 3
+
+
+def test_las_decisiones_antiguas_por_id_siguen_pesando_igual():
+    assert sm.compute_affinity([Event("decision", "preguntar_trabajo", 1)]) == sm.BASE_AFFINITY + 2
+    assert sm.compute_affinity([Event("decision", "proponer_paseo", 1)]) == sm.BASE_AFFINITY + 3
+
+
+def test_un_perdon_de_otra_fase_no_resuelve_el_conflicto():
+    events = (
+        turns(3)
+        + [Event("decision", "pedir_perdon", 2), Event("transicion", "conflicto", 3)]
+        + turns(3, start=4)
+    )
+    state = sm.derive_state(events)
+    assert state.decisions == frozenset()
+    assert sm.next_transition(state) is None
