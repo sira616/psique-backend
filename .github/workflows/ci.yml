@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# Un push nuevo a la misma rama deja obsoleta la ejecución anterior.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Valores de prueba, no secretos: la app no arranca sin JWT_SECRET (>= 32 caracteres) y sin
+# ANTHROPIC_API_KEY el LLM va en modo demo, así que ningún job sale a la red a por un modelo.
+env:
+  ENVIRONMENT: test
+  JWT_SECRET: ci-secreto-de-prueba-no-usar-en-produccion-0123456789
+  ANTHROPIC_API_KEY: ""
+  LLM_PROVIDER: cloud
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  tests:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      # tests/conftest.py fija su propia BD temporal y carpeta de media.
+      - name: pytest
+        run: pytest -q
+
+  migrations:
+    name: Migraciones (Alembic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      # BD vacía: las migraciones tienen que construir el esquema entero desde cero.
+      - name: alembic upgrade head sobre SQLite vacía
+        run: |
+          export DATABASE_URL="sqlite:///${RUNNER_TEMP}/ci.db"
+          alembic upgrade head
+
+      # Falla si los modelos tienen cambios sin migración (autogenerate propondría algo).
+      - name: alembic check (sin migraciones pendientes)
+        run: |
+          export DATABASE_URL="sqlite:///${RUNNER_TEMP}/ci.db"
+          alembic check
