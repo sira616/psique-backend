@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.env
+.env.backup*
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+.vscode/
+.idea/
+
+# Base de datos local: conversaciones íntimas, fuera del repositorio.
+*.db
+*.db-shm
+*.db-wal
+*.db.backup-*
+
+# Avatares y banners subidos por usuarios.
+media/
+
+# Notas privadas: no salen del ordenador
+PENDIENTE.md
+CREDENCIALES-DEV.md

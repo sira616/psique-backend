@@ -1,0 +1,44 @@
+from pydantic import BaseModel, Field
+
+from app.core.passwords import MAX_LENGTH, MIN_LENGTH
+from app.models.user import User
+
+
+class UserRegister(BaseModel):
+    """Solo lo imprescindible: cualquier campo que el cliente fije aquí es un campo que
+    el cliente puede falsear."""
+
+    username: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=MIN_LENGTH, max_length=MAX_LENGTH)
+    display_name: str | None = Field(default=None, max_length=64)
+
+
+class LoginIn(BaseModel):
+    login: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=MAX_LENGTH)
+
+
+class AuthUserOut(BaseModel):
+    id: str
+    username: str
+    displayName: str
+    # Identidad pública (para enlazar a /perfil/<handle>); `username` sigue siendo el login.
+    handle: str
+    isDev: bool
+
+    @classmethod
+    def from_user(cls, user: User) -> "AuthUserOut":
+        return cls(
+            id=user.id,
+            username=user.username,
+            displayName=user.display_name,
+            handle=user.handle,
+            isDev=user.is_dev,
+        )
+
+
+class SessionOut(BaseModel):
+    """El refresh no viaja en el cuerpo: va en una cookie httpOnly que JavaScript no lee."""
+
+    access_token: str
+    user: AuthUserOut

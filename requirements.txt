@@ -1,0 +1,32 @@
+# --- Framework web ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.13.4
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
+# Formularios multipart (subida de avatar y banner).
+python-multipart==0.0.32
+
+# --- Imágenes: validar el tipo real y re-codificar (quita EXIF) ---
+pillow==12.3.0
+
+# --- Auth local: JWT propio y Argon2id ---
+pyjwt==2.9.0
+argon2-cffi==23.1.0
+
+# --- Base de datos ---
+sqlalchemy==2.0.35
+alembic==1.13.3
+# Windows no trae base de zonas horarias: sin esto ZoneInfo("Europe/Madrid") falla.
+tzdata==2026.4
+
+# --- LLM ---
+# 1.x: la 0.34 de origen no conoce stop_reason "refusal" ni los modelos actuales.
+# Trae httpx2 como dependencia propia; httpx sigue haciendo falta para Ollama y TestClient.
+anthropic==1.6.0
+httpx==0.27.2
+
+# --- Testing ---
+pytest==8.3.3
+
+# TODO(RAG): no se incluye sentence-transformers a propósito. Ver README.
