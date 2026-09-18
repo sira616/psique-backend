@@ -1,6 +1,6 @@
 # Psique — backend
 
-[![CI](https://github.com/sira616/psique-backend/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/sira616/psique-backend/actions/workflows/ci.yml)
+[![CI](https://github.com/sira616/psique-backend/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sira616/psique-backend/actions/workflows/ci.yml)
 
 API de historias románticas interactivas **para todos los públicos**: el personaje
 conversa, y cuando una escena se acerca a lo íntimo, se funde a negro.
@@ -36,7 +36,7 @@ Tests (sin red ni claves, LLM doblado):
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-En cada push y PR a `master`, GitHub Actions (`.github/workflows/ci.yml`) pasa pytest y
+En cada push y PR a `main`, GitHub Actions (`.github/workflows/ci.yml`) pasa pytest y
 comprueba que `alembic upgrade head` construye una SQLite vacía y que `alembic check` no
 encuentra cambios de modelos sin migración.
 

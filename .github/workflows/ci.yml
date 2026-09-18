@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
 
 # Un push nuevo a la misma rama deja obsoleta la ejecución anterior.
 concurrency:
