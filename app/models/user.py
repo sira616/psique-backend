@@ -34,6 +34,10 @@ class User(Base):
     # continúa ni relee ninguna partida. Ver `conduct_service`.
     restricted_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Última versión aceptada de términos y privacidad (`settings.TERMS_VERSION`). Si la
+    # vigente cambia, el cliente pide aceptarla otra vez antes de seguir.
+    terms_accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    terms_version: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # Caché del saldo: la verdad está en `obolo_movements`. Se toca solo desde
     # `app.services.economy_service`, en la misma transacción que su movimiento.
     obolos: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

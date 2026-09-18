@@ -173,8 +173,13 @@ class BookReview(Base):
 
 
 class ConductIncident(Base):
-    """Una partida cerrada por la política de contenido. Sin el texto: nivel y regla bastan
-    para contar reincidencias, y el mensaje ofensivo no se guarda en ningún sitio."""
+    """Una partida cerrada por la política de contenido.
+
+    Nivel y regla bastan para contar reincidencias. `excerpt` guarda un extracto acotado del
+    mensaje que lo provocó, solo para que un dev pueda revisarlo si hay apelación: no sale en
+    ninguna respuesta al usuario salvo en su export de datos, se borra al resolver el
+    incidente y caduca a los `CONDUCT_EXCERPT_DAYS` (ver `conduct_service`).
+    """
 
     __tablename__ = "conduct_incidents"
     __table_args__ = (Index("ix_conduct_incidents_user_fecha", "user_id", "created_at"),)
@@ -185,3 +190,15 @@ class ConductIncident(Base):
     level: Mapped[str] = mapped_column(String(12))
     rule: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    excerpt: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    # Apelación del usuario: una por incidente, texto opcional.
+    appealed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    appeal_text: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Revisión: null = sin resolver; "aceptada" saca el incidente del cómputo de restricción.
+    review_status: Mapped[Optional[str]] = mapped_column(String(12), nullable=True, index=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Sin FK y con el handle copiado: la auditoría tiene que sobrevivir a cambios de handle.
+    # Si el dev borra su cuenta, se anonimiza (ver `account_service.delete_account`).
+    reviewed_by_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    reviewed_by_handle: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    review_note: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)

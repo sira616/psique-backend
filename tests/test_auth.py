@@ -4,7 +4,7 @@ import uuid
 import jwt
 
 from app.core.config import settings
-from tests.conftest import PASSWORD, register
+from tests.conftest import PASSWORD, TERMS, register
 
 
 def _name() -> str:
@@ -21,12 +21,12 @@ def test_el_registro_ya_devuelve_la_sesion(client):
 def test_el_usuario_no_distingue_mayusculas(client):
     name = _name()
     register(client, name.upper())
-    resp = client.post("/api/auth/register", json={"username": name, "password": PASSWORD})
+    resp = client.post("/api/auth/register", json={"username": name, "password": PASSWORD, **TERMS})
     assert resp.status_code == 409
 
 
 def test_contrasena_floja_es_422(client):
-    resp = client.post("/api/auth/register", json={"username": _name(), "password": "todominusculas123"})
+    resp = client.post("/api/auth/register", json={"username": _name(), "password": "todominusculas123", **TERMS})
     assert resp.status_code == 422
 
 
@@ -46,7 +46,7 @@ def test_sin_credencial_es_401(client):
 
 
 def _register_raw(client):
-    return client.post("/api/auth/register", json={"username": _name(), "password": PASSWORD})
+    return client.post("/api/auth/register", json={"username": _name(), "password": PASSWORD, **TERMS})
 
 
 def _cookie(resp) -> str:
@@ -98,7 +98,7 @@ def test_logout_revoca_el_refresh_y_borra_la_cookie(client):
 
 def test_la_api_no_crea_cuentas_dev(client):
     resp = client.post(
-        "/api/auth/register", json={"username": _name(), "password": PASSWORD, "is_dev": True}
+        "/api/auth/register", json={"username": _name(), "password": PASSWORD, "is_dev": True, **TERMS}
     )
     assert resp.json()["user"]["isDev"] is False
 

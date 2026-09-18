@@ -34,6 +34,8 @@ from app.llm import router as llm_router  # noqa: E402
 from app.main import app  # noqa: E402
 
 PASSWORD = "ContrasenaLarga123"
+# Las dos casillas obligatorias del registro.
+TERMS = {"accept_terms": True, "min_age_confirmed": True}
 
 
 @pytest.fixture(scope="session")
@@ -51,7 +53,7 @@ def client():
 
 def register(client: TestClient, username: str | None = None) -> dict:
     username = username or f"u{uuid.uuid4().hex[:12]}"
-    resp = client.post("/api/auth/register", json={"username": username, "password": PASSWORD})
+    resp = client.post("/api/auth/register", json={"username": username, "password": PASSWORD, **TERMS})
     assert resp.status_code == 201, resp.text
     return resp.json()
 

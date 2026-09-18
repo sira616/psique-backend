@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     CONDUCT_CLOSURES_LIMIT: int = 3
     CONDUCT_WINDOW_DAYS: int = 30
     CONDUCT_RESTRICTION_DAYS: int = 7
+    # Días que se guarda el extracto del mensaje que cerró una partida (solo para revisión).
+    CONDUCT_EXCERPT_DAYS: int = 30
+    CONDUCT_EXCERPT_CHARS: int = 300
     # Segunda opinión del LLM sobre lo que escribe el usuario (paráfrasis, eufemismos). Solo
     # puede subir el nivel de los patrones; si falla o tarda, mandan los patrones.
     LLM_MODERATION_ENABLED: bool = True
@@ -87,6 +90,14 @@ class Settings(BaseSettings):
     CHAT_TURNS_PER_DAY: int = 60
     # Las cuentas is_dev prueban a fondo; se siguen contando, pero no se les corta.
     DEV_UNLIMITED_TURNS: bool = True
+
+    # --- Legal ---
+    # Versión vigente de términos y privacidad (fecha de la redacción). Cambiarla obliga a
+    # todas las cuentas a aceptarla otra vez; tiene que coincidir con la del frontend.
+    TERMS_VERSION: str = "2026-09-18"
+    # Edad mínima declarada al registrarse. 16 y no los 14 del consentimiento digital en
+    # España: son historias románticas con personajes adultos.
+    MIN_AGE: int = 16
 
     RATE_LIMIT_MAX_REQUESTS: int = 5
     RATE_LIMIT_WINDOW_SECONDS: int = 60

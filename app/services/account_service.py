@@ -10,6 +10,8 @@ Decisiones del borrado:
   publicar y con `deleted_at`, igual que un borrado normal de historia. Así esas partidas
   siguen pudiendo continuar, pero la historia ya no es de nadie ni sale en ningún sitio.
   `scripts.cleanup` la borra cuando ya no queden partidas.
+- Incidentes de conducta (con su extracto) de la cuenta: se borran. Si la cuenta era dev,
+  en los incidentes ajenos que resolvió se anonimiza quién lo hizo.
 - Avatar y banner: los ficheros se borran después del commit. Si el commit fallara, la
   cuenta seguiría apuntando a ellos.
 """
@@ -21,6 +23,7 @@ from sqlalchemy import delete, func, inspect, select, update
 from sqlalchemy.orm import Session as DbSession
 
 from app.core import passwords
+from app.core.config import settings
 from app.models.auth import RefreshToken
 from app.models.economy import OboloMovement, ScratchCard
 from app.models.limits import ChatTurnUsage
@@ -87,13 +90,23 @@ def export_data(db: DbSession, user: User) -> dict:
         "oboloMovements": [_row(m, ("user_id",)) for m in _all(db, OboloMovement, OboloMovement.user_id == user.id)],
         "scratchCards": cards,
         "conductIncidents": [
-            _row(i, ("user_id",)) for i in _all(db, ConductIncident, ConductIncident.user_id == user.id)
+            # Con el extracto (es suyo); sin quién lo revisó, que es dato de otra persona.
+            _row(i, ("user_id", "reviewed_by_id", "reviewed_by_handle"))
+            for i in _all(db, ConductIncident, ConductIncident.user_id == user.id)
         ],
         "chatUsage": [
             _row(u, ("user_id",))
             for u in _all(db, ChatTurnUsage, ChatTurnUsage.user_id == user.id, order=ChatTurnUsage.day)
         ],
     }
+
+
+def accept_terms(db: DbSession, user: User) -> User:
+    user.terms_accepted_at = _now()
+    user.terms_version = settings.TERMS_VERSION
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def delete_account(db: DbSession, user: User, password: str) -> None:
@@ -109,6 +122,12 @@ def delete_account(db: DbSession, user: User, password: str) -> None:
     db.execute(delete(ConductIncident).where(
         (ConductIncident.user_id == user_id) | ConductIncident.story_id.in_(own_stories)
     ))
+    # Incidentes ajenos que revisó (si era dev): la resolución se queda, quién la tomó no.
+    db.execute(
+        update(ConductIncident)
+        .where(ConductIncident.reviewed_by_id == user_id)
+        .values(reviewed_by_id=None, reviewed_by_handle=None)
+    )
     for model in (Message, MemoryFact, StoryEvent):
         db.execute(delete(model).where(model.story_id.in_(own_stories)))
     db.execute(delete(Story).where(Story.user_id == user_id))

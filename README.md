@@ -24,8 +24,13 @@ python -m venv venv
 Copy-Item .env.example .env
 # Rellena JWT_SECRET (y ANTHROPIC_API_KEY si quieres respuestas reales):
 .\venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
-.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8010
+.\venv\Scripts\python.exe -m scripts.dev --port 8010
 ```
+
+`scripts/dev.py` arranca uvicorn y lo reinicia al cambiar `app/`, `migrations/`, `.env` o
+`alembic.ini`. No uses `uvicorn --reload` en Windows: su reloader para el proceso con un
+Ctrl+C que se pierde si no hay consola compartida (lanzado desde la app de escritorio, un
+IDE o en segundo plano) y se queda en "Reloading..." sirviendo el código viejo.
 
 Las migraciones se aplican solas al arrancar. Sin `ANTHROPIC_API_KEY` el modo cloud
 responde con un texto de demo, útil para probar el flujo completo sin gastar.
@@ -46,8 +51,13 @@ Todo cuelga de `/api` (el frontend proxya `/api` al puerto 8000).
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| POST | `/api/auth/register`, `/login`, `/refresh`, `/logout` | Auth local (Argon2id + JWT con refresh rotatorio) |
-| GET | `/api/me` | Cuenta actual |
+| POST | `/api/auth/register`, `/login`, `/refresh`, `/logout` | Auth local (Argon2id + JWT con refresh rotatorio). El registro exige `accept_terms` y `min_age_confirmed` |
+| GET | `/api/me` | Cuenta actual (incluye `termsVersion` vigente y `termsAccepted`) |
+| POST | `/api/me/accept-terms` | Acepta la versión vigente de términos y privacidad (`{version, confirm: true}`) |
+| GET | `/api/me/incidents` | Partidas cerradas por la política y estado de su apelación |
+| POST | `/api/me/incidents/{id}/appeal` | Apela un cierre, una vez (`{text?}`, ≤500, pasa el filtro de entrada) |
+| GET | `/api/dev/incidents`, `/api/dev/incidents/{id}` | Cola de moderación (solo dev): filtros, detalle con extracto |
+| POST | `/api/dev/incidents/{id}/accept`, `/reject` | Resuelve (`{note?}`); aceptar reabre y recalcula la restricción |
 | GET / PATCH | `/api/me/profile` | Perfil propio (handle, bio, enlace, visibilidad de estanterías) |
 | POST / DELETE | `/api/me/avatar`, `/api/me/banner` | Imagen de perfil (multipart `file`), servida en `/media/...` |
 | GET | `/api/profiles/{handle}` | Perfil público con estanterías "Publicadas" y "Leyendo" |

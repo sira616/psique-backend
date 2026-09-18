@@ -142,7 +142,7 @@ def chat(
     verdict = moderation.classify_input(text)
     action = content_policy.consequence(verdict.level, adult_book=story_service.is_adult_book(db, story.character_id))
     if action is content_policy.Action.CLOSE:
-        until = conduct_service.close_story(db, user, story, verdict)
+        until = conduct_service.close_story(db, user, story, verdict, excerpt=text)
         return policy.story_closed_response(story, until)
     if action is content_policy.Action.REDIRECT:
         profile = story_service.story_profile(db, story)

@@ -57,7 +57,18 @@ def _session(response: Response, db: Session, user: User) -> SessionOut:
     dependencies=[Depends(_register_rate_limiter)],
 )
 def register(payload: UserRegister, response: Response, db: Session = Depends(get_db)):
-    """Devuelve ya la sesión: obligar a entrar justo después de registrarse no aporta."""
+    """Devuelve ya la sesión: obligar a entrar justo después de registrarse no aporta.
+
+    Exige aceptar términos y privacidad y declarar la edad mínima; se guarda la versión
+    aceptada con la fecha."""
+    if not payload.accept_terms or not payload.min_age_confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Para crear la cuenta tienes que aceptar los términos y la política de privacidad "
+                f"y confirmar que tienes al menos {settings.MIN_AGE} años."
+            ),
+        )
     try:
         user = auth_service.create_user(db, payload.username, payload.password, payload.display_name)
     except PasswordPolicyError as exc:

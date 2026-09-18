@@ -47,6 +47,9 @@ def create_user(db: DbSession, username: str, password: str, display_name: str |
         password_hash=passwords.hash_password(password),
         display_name=(display_name or username).strip()[:64],
         handle=profile_service.unique_handle(db, normalized),
+        # Quien llama ya comprobó las casillas del registro.
+        terms_accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        terms_version=settings.TERMS_VERSION,
     )
     db.add(user)
     db.flush()

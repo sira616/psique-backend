@@ -19,7 +19,11 @@ from app.schemas.auth import AuthUserOut
 from app.schemas.profile import MyProfileOut, ProfilePatchIn
 from app.api.auth import clear_refresh_cookie
 from app.core.passwords import MAX_LENGTH
-from app.services import account_service, conduct_service, media_service, profile_service, usage_service
+from app.schemas.conduct import AppealIn, MyIncidentOut
+from app.services import (
+    account_service, conduct_service, incident_service, media_service, profile_service, usage_service,
+)
+from app.story import moderation
 from app.services.media_service import AVATAR, BANNER, ImageKind, ImageRejectedError
 from app.services.profile_service import ProfileError, field_error
 
@@ -30,6 +34,8 @@ _upload_rate_limiter = RateLimiter(settings.RATE_LIMIT_MAX_REQUESTS * 2, setting
 # Exportar recorre toda la cuenta; borrar comprueba la contraseña. Los dos, al ritmo del login.
 _export_rate_limiter = RateLimiter(settings.RATE_LIMIT_MAX_REQUESTS, settings.RATE_LIMIT_WINDOW_SECONDS)
 _delete_rate_limiter = RateLimiter(settings.RATE_LIMIT_MAX_REQUESTS, settings.RATE_LIMIT_WINDOW_SECONDS)
+# Una apelación por incidente ya limita, pero el texto pasa por el moderador LLM: con tope.
+_appeal_rate_limiter = RateLimiter(settings.RATE_LIMIT_MAX_REQUESTS, settings.RATE_LIMIT_WINDOW_SECONDS)
 
 # Lo que añade el multipart alrededor del fichero (boundary y cabeceras de la parte).
 _MULTIPART_MARGIN = 16 * 1024
@@ -213,3 +219,60 @@ def delete_avatar(db: Session = Depends(get_db), user: User = Depends(get_curren
 def delete_banner(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     media_service.remove(db, user, BANNER)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class TermsAcceptIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # La versión que se le enseñó: si entretanto cambió, tiene que leer la nueva.
+    version: str = Field(min_length=1, max_length=20)
+    confirm: Literal[True]
+
+
+@router.post("/accept-terms", response_model=AuthUserOut)
+def accept_terms(payload: TermsAcceptIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if payload.version != settings.TERMS_VERSION:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": "Los términos han cambiado mientras los leías. Recarga para ver la versión vigente.",
+                "code": "terms_outdated",
+                "termsVersion": settings.TERMS_VERSION,
+            },
+        )
+    return AuthUserOut.from_user(account_service.accept_terms(db, user))
+
+
+@router.get("/incidents", response_model=list[MyIncidentOut])
+def my_incidents(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Partidas cerradas por la política y el estado de su apelación. Sin regla ni extracto."""
+    return incident_service.my_incidents(db, user)
+
+
+APPEAL_TEXT_REJECTED = (
+    "No podemos enviar la apelación con ese texto. Cuéntanos qué pasó sin contenido explícito "
+    "y la revisaremos igual."
+)
+
+
+@router.post(
+    "/incidents/{incident_id}/appeal",
+    response_model=MyIncidentOut,
+    dependencies=[Depends(_appeal_rate_limiter)],
+)
+def appeal_incident(
+    incident_id: int, payload: AppealIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """Apela un cierre propio, una vez. El texto pasa el filtro de entrada, pero lo que no
+    pase solo da un 422: apelar no cierra ni cuenta nada."""
+    text = (payload.text or "").strip()
+    if text and moderation.check_user_text(text):
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": APPEAL_TEXT_REJECTED, "code": "appeal_text_rejected"},
+        )
+    try:
+        incident = conduct_service.appeal(db, user, incident_id, text or None)
+    except conduct_service.ReviewError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc), "code": exc.code})
+    return incident_service.my_incident_out(db, incident)

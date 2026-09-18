@@ -1,14 +1,17 @@
-"""Herramientas de desarrollo sobre las partidas propias.
+"""Herramientas de desarrollo sobre las partidas propias y cola de moderación.
 
-Solo cuentas `is_dev` (403 al resto) y solo partidas de quien llama: una ajena da el mismo
-404 que una que no existe. Nada de esto toca óbolos. Todo queda en `story_events` con
+Solo cuentas `is_dev` (403 al resto). Las herramientas de partida solo actúan sobre las de
+quien llama: una ajena da el mismo 404 que una que no existe. La cola de moderación
+(`/api/dev/incidents`) sí ve incidentes de todas las cuentas. Nada de esto toca óbolos. Todo queda en `story_events` con
 detalle "dev", así un estado forzado se distingue después de uno jugado.
 """
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 from sqlalchemy.orm import Session
@@ -20,11 +23,13 @@ from app.llm.prompts.story import build_system_prompt
 from app.models.story import ConductIncident, Story, StoryEvent
 from app.models.user import User
 from app.schemas.auth import AuthUserOut
-from app.services import conduct_service, story_service
+from app.schemas.conduct import DevIncidentOut, DevIncidentPage, ResolveOut, ReviewIn
+from app.services import conduct_service, incident_service, story_service
 from app.story import context, memory
 from app.story import state_machine as sm
 
 router = APIRouter(prefix="/api/dev", tags=["dev"])
+logger = logging.getLogger(__name__)
 
 DEV_DETAIL = "dev"
 
@@ -164,3 +169,58 @@ def lift_restriction(
     if clear_incidents:
         db.query(ConductIncident).filter(ConductIncident.user_id == user.id).delete(synchronize_session=False)
     return AuthUserOut.from_user(conduct_service.lift_restriction(db, user))
+
+
+# --- Cola de moderación -----------------------------------------------------------------
+
+def _review_error(exc: conduct_service.ReviewError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc), "code": exc.code})
+
+
+@router.get("/incidents", response_model=DevIncidentPage)
+def list_incidents(
+    filter: incident_service.QueueFilter = "pendientes",
+    level: str | None = Query(default=None, max_length=12),
+    rule: str | None = Query(default=None, max_length=40),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_dev),
+):
+    """Sin extracto en el listado: solo se ve al abrir un incidente concreto."""
+    return incident_service.queue(db, user, filter=filter, level=level, rule=rule, limit=limit, offset=offset)
+
+
+@router.get("/incidents/{incident_id}", response_model=DevIncidentOut)
+def incident_detail(incident_id: int, db: Session = Depends(get_db), user: User = Depends(require_dev)):
+    incident = db.get(ConductIncident, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ese incidente no existe.")
+    return incident_service.dev_incident_out(db, incident, user, detail=True)
+
+
+def _resolve(incident_id: int, accept: bool, payload: ReviewIn | None, db: Session, user: User):
+    try:
+        incident, reopened = conduct_service.resolve(db, user, incident_id, accept, payload.note if payload else None)
+    except conduct_service.ReviewError as exc:
+        return _review_error(exc)
+    logger.info(
+        "Incidente %s %s por %s (partida reabierta: %s)",
+        incident.id, incident.review_status, user.handle, reopened,
+    )
+    return ResolveOut(incident=incident_service.dev_incident_out(db, incident, user, detail=True), storyReopened=reopened)
+
+
+@router.post("/incidents/{incident_id}/accept", response_model=ResolveOut)
+def accept_incident(
+    incident_id: int, payload: ReviewIn | None = None, db: Session = Depends(get_db), user: User = Depends(require_dev)
+):
+    """Da la razón al usuario: reabre la partida si puede y recalcula la restricción."""
+    return _resolve(incident_id, True, payload, db, user)
+
+
+@router.post("/incidents/{incident_id}/reject", response_model=ResolveOut)
+def reject_incident(
+    incident_id: int, payload: ReviewIn | None = None, db: Session = Depends(get_db), user: User = Depends(require_dev)
+):
+    return _resolve(incident_id, False, payload, db, user)

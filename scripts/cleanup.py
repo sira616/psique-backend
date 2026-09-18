@@ -9,6 +9,8 @@
   respetan: `media_service.store` escribe el fichero antes del commit que lo enlaza.
 - Refresh tokens caducados o revocados hace más de `TOKEN_GRACE_DAYS`.
 - Ventanas caducadas del rate limiter.
+- Extractos de incidentes de conducta de más de `CONDUCT_EXCERPT_DAYS` (el incidente se
+  queda; solo se vacía el texto).
 
 No migra la base: tiene que estar ya en la última versión (el backend migra al arrancar).
 """
@@ -28,7 +30,7 @@ from app.models.auth import RefreshToken
 from app.models.limits import RateLimitWindow
 from app.models.story import BookReview, ConductIncident, MemoryFact, Message, Story, StoryBlueprint, StoryEvent
 from app.models.user import User
-from app.services import custom_story_service
+from app.services import conduct_service, custom_story_service
 from app.services.media_service import AVATAR, BANNER
 
 TOKEN_GRACE_DAYS = 7
@@ -41,6 +43,7 @@ class Report:
     media_files: list[str] = field(default_factory=list)
     refresh_tokens: int = 0
     rate_limit_windows: int = 0
+    incident_excerpts: int = 0
 
     def lines(self, applied: bool) -> list[str]:
         verb = "Borrado" if applied else "Se borraría"
@@ -51,6 +54,7 @@ class Report:
             *(f"  - {m}" for m in self.media_files),
             f"{verb}: {self.refresh_tokens} refresh token(s) caducado(s) o revocado(s) antiguo(s)",
             f"{verb}: {self.rate_limit_windows} ventana(s) caducada(s) del rate limiter",
+            f"{verb}: {self.incident_excerpts} extracto(s) caducado(s) de incidentes",
         ]
         return out
 
@@ -109,6 +113,7 @@ def run(db: DbSession, media_root: Path, *, apply: bool, now: datetime | None = 
         rate_limit_windows=db.scalar(
             select(func.count()).select_from(RateLimitWindow).where(RateLimitWindow.expires_at <= int(now_epoch))
         ) or 0,
+        incident_excerpts=conduct_service.purge_expired_excerpts(db, now, apply=False),
     )
     if not apply:
         return report
@@ -125,6 +130,7 @@ def run(db: DbSession, media_root: Path, *, apply: bool, now: datetime | None = 
         db.execute(delete(StoryBlueprint).where(StoryBlueprint.id == blueprint.id))
     db.execute(delete(RefreshToken).where(_token_filter(now)))
     db.execute(delete(RateLimitWindow).where(RateLimitWindow.expires_at <= int(now_epoch)))
+    conduct_service.purge_expired_excerpts(db, now)
     db.commit()
     # Los ficheros al final: si el commit fallara, no se habría perdido nada referenciado.
     for path in media:
