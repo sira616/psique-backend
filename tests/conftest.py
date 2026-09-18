@@ -21,6 +21,9 @@ os.environ["RATE_LIMIT_MAX_REQUESTS"] = "10000"
 os.environ["RATE_LIMIT_WINDOW_SECONDS"] = "60"
 # Nunca un Ollama real, pase lo que pase en el .env de quien los ejecute.
 os.environ["LLM_PROVIDER"] = "cloud"
+# Los tests que simulan tener clave no deberían recibir además la consulta de moderación
+# en su doble del LLM. tests/test_moderation.py la activa donde la prueba.
+os.environ["LLM_MODERATION_ENABLED"] = "false"
 # El TestClient habla http: una cookie Secure no volvería nunca al servidor.
 os.environ["COOKIE_SECURE"] = "false"
 

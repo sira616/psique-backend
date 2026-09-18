@@ -27,7 +27,7 @@ from app.schemas.profile import (
 from app.services import custom_story_service, media_service
 from app.story import state_machine as sm
 from app.story.character_profile import get_character
-from app.story.content_policy import check_user_text
+from app.story.moderation import check_user_text
 
 # Cada estantería enseña las más recientes; un perfil no es un listado paginado.
 SHELF_LIMIT = 50

@@ -26,10 +26,16 @@ def _get_client() -> Anthropic:
     return _client
 
 
-def generate(system_prompt: str, messages: list[dict], *, max_tokens: int | None = None) -> str:
+def generate(
+    system_prompt: str, messages: list[dict], *, max_tokens: int | None = None, timeout: float | None = None
+) -> str:
     if not settings.ANTHROPIC_API_KEY:
         return DEMO_TEXT
-    response = _get_client().messages.create(
+    client = _get_client()
+    if timeout is not None:
+        # Sin reintentos: quien pone un plazo corto prefiere fallar a esperar el doble.
+        client = client.with_options(timeout=timeout, max_retries=0)
+    response = client.messages.create(
         model=settings.LLM_CLOUD_MODEL,
         max_tokens=max_tokens or settings.LLM_MAX_TOKENS,
         system=system_prompt,

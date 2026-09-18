@@ -59,12 +59,28 @@ def demo_mode() -> bool:
     return settings.LLM_PROVIDER != "local" and not settings.ANTHROPIC_API_KEY
 
 
-def generate(system_prompt: str, messages: list[ChatMessage], *, max_tokens: int | None = None) -> str:
+def generate(
+    system_prompt: str,
+    messages: list[ChatMessage],
+    *,
+    max_tokens: int | None = None,
+    timeout: float | None = None,
+    json_output: bool = False,
+) -> str:
+    """`json_output` solo lo aplica Ollama (`format: json`); con Claude basta el prompt."""
     msgs = normalize_messages(messages)
     try:
         if settings.LLM_PROVIDER == "local":
-            return local.generate(system_prompt, msgs)
-        return cloud.generate(system_prompt, msgs, max_tokens=max_tokens)
+            # En Ollama el tope solo se aplica a salidas JSON cortas: los demás topes se
+            # fijaron pensando en Claude y nunca se habían aplicado aquí.
+            return local.generate(
+                system_prompt,
+                msgs,
+                max_tokens=max_tokens if json_output else None,
+                timeout=timeout or 120,
+                json_output=json_output,
+            )
+        return cloud.generate(system_prompt, msgs, max_tokens=max_tokens, timeout=timeout)
     except cloud.RefusalStop as exc:
         raise LLMRefusalError(str(exc)) from exc
     except _PROVIDER_ERRORS as exc:

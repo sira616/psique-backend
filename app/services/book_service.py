@@ -32,7 +32,7 @@ from app.schemas.profile import AuthorOut
 from app.services import conduct_service, custom_story_service, media_service, story_service
 from app.story import state_machine as sm
 from app.story.character_profile import get_character, load_characters
-from app.story.content_policy import check_user_text
+from app.story.moderation import check_user_text
 
 RECOMMENDED_LIMIT = 6
 

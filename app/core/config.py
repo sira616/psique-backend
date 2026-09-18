@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     CONDUCT_CLOSURES_LIMIT: int = 3
     CONDUCT_WINDOW_DAYS: int = 30
     CONDUCT_RESTRICTION_DAYS: int = 7
+    # Segunda opinión del LLM sobre lo que escribe el usuario (paráfrasis, eufemismos). Solo
+    # puede subir el nivel de los patrones; si falla o tarda, mandan los patrones.
+    LLM_MODERATION_ENABLED: bool = True
+    # Corto: cada segundo aquí es un segundo antes de que empiece la respuesta.
+    LLM_MODERATION_TIMEOUT_SECONDS: float = 8
+    # Por debajo, y sin nada que los patrones marquen, no se pregunta ("hola", "vale").
+    LLM_MODERATION_MIN_CHARS: int = 12
+    LLM_MODERATION_CACHE_SIZE: int = 512
 
     # --- Tope de gasto en LLM ---
     # Turnos de chat que llegan al modelo por cuenta y día local (ECONOMY_TIMEZONE). Los

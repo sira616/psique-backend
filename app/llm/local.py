@@ -32,12 +32,24 @@ def _body(system_prompt: str, messages: list[dict], stream: bool) -> dict:
     }
 
 
-def generate(system_prompt: str, messages: list[dict]) -> str:
+def generate(
+    system_prompt: str,
+    messages: list[dict],
+    *,
+    max_tokens: int | None = None,
+    timeout: float = 120,
+    json_output: bool = False,
+) -> str:
+    body = _body(system_prompt, messages, False)
+    if max_tokens:
+        body["options"] = {"num_predict": max_tokens}
+    if json_output:
+        body["format"] = "json"
     response = httpx.post(
         f"{settings.OLLAMA_BASE_URL}/api/chat",
-        json=_body(system_prompt, messages, False),
+        json=body,
         headers=_headers(),
-        timeout=120,
+        timeout=timeout,
     )
     response.raise_for_status()
     return response.json()["message"]["content"]

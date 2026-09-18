@@ -35,6 +35,7 @@ from app.schemas.profile import AuthorOut, StoryCardOut
 from app.schemas.story import CharacterOut
 from app.services import media_service
 from app.story.character_profile import CharacterProfile
+from app.story import moderation
 from app.story.content_policy import check_user_text
 
 CUSTOM_PREFIX = "custom:"
@@ -224,7 +225,7 @@ def create(db: DbSession, user: User, payload: DefinedStoryIn | ConceptStoryIn) 
                  payload.setting, payload.tone, payload.backstory, payload.hook)
     else:
         texts = (payload.premise, payload.tone)
-    rejection = check_user_text(*texts)
+    rejection = moderation.check_user_text(*texts)
     if rejection:
         raise ContentRejectedError(rejection)
 

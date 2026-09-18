@@ -218,20 +218,27 @@ def _classify_patterns(text: str) -> Classification:
 
 
 class InputClassifier(Protocol):
-    """Punto de extensión: un clasificador con LLM encajaría aquí.
+    """Lo que cumplen los patrones y `app.story.moderation.LlmInputClassifier`.
 
-    Tendría que ser más estricto que los patrones, nunca más permisivo (p. ej. tomar el
-    nivel más grave de los dos), y fallar cerrado a los patrones si el modelo no responde.
+    Un clasificador extra nunca sustituye a los patrones: se toma el nivel más grave de
+    los dos (`stricter`), y si el extra falla mandan los patrones.
     """
 
     def __call__(self, text: str) -> Classification: ...
 
 
-_classifier: InputClassifier = _classify_patterns
+_SEVERITY = {ContentLevel.OK: 0, ContentLevel.SENSUAL: 1, ContentLevel.EXPLICITO: 2, ContentLevel.PROHIBIDO: 3}
+
+
+def stricter(a: Classification, b: Classification) -> Classification:
+    """El más grave; en empate, `a` (su regla es la que ya explicaba el nivel)."""
+    return b if _SEVERITY[b.level] > _SEVERITY[a.level] else a
 
 
 def classify_input(text: str) -> Classification:
-    return _classifier(text)
+    """Solo patrones: sin red, para validar también lo que genera el LLM. La entrada del
+    usuario pasa además por `app.story.moderation.classify_input`."""
+    return _classify_patterns(text)
 
 
 # --- Consecuencias ------------------------------------------------------------------------
@@ -290,6 +297,7 @@ def check_user_text(*texts: str | None) -> str | None:
     """Mensaje para el usuario si algún texto no se admite; None si todo vale.
 
     Suma el clasificador de chat (jerga incluida) a los patrones estrictos de siempre.
+    Solo patrones: para lo que escribe una persona, `app.story.moderation.check_user_text`.
     """
     for text in texts:
         if not text:

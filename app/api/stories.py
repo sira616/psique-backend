@@ -14,12 +14,13 @@ from app.models.story import STORY_ACTIVE, STORY_CLOSED
 from app.models.user import User
 from app.schemas.story import CharacterOut, ChatIn, StoryCreateIn, StoryOut, StorySummaryOut
 from app.services import chat_stream_service, conduct_service, economy_service, story_service, usage_service
-from app.story import content_policy
+from app.story import content_policy, moderation
 from app.story import scene as scene_rules
 
 router = APIRouter(prefix="/api", tags=["stories"])
 
-# Cada mensaje son dos llamadas al LLM que pagamos nosotros. Más holgado que el login
+# Cada mensaje son dos o tres llamadas al LLM (moderación, respuesta, extracción) que
+# pagamos nosotros. Más holgado que el login
 # porque conversar es el uso normal.
 _chat_rate_limiter = RateLimiter(
     settings.RATE_LIMIT_MAX_REQUESTS * 4, settings.RATE_LIMIT_WINDOW_SECONDS
@@ -136,7 +137,9 @@ def chat(
 
     # Antes del stream y antes de guardar nada: lo que no pasa la política no llega al LLM,
     # no se guarda y no puntúa. Las sugerencias también, por si el LLM coló algo en una.
-    verdict = content_policy.classify_input(text)
+    # La consulta de moderación al LLM no gasta cupo diario, y un mensaje bloqueado tampoco:
+    # sale antes de `reserve_turn`.
+    verdict = moderation.classify_input(text)
     action = content_policy.consequence(verdict.level, adult_book=story_service.is_adult_book(db, story.character_id))
     if action is content_policy.Action.CLOSE:
         until = conduct_service.close_story(db, user, story, verdict)
