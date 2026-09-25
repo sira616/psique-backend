@@ -132,6 +132,11 @@ class StoryBlueprint(Base):
     mode: Mapped[str] = mapped_column(String(12))  # "definida" | "concepto"
     title: Mapped[str] = mapped_column(String(80))
     hook: Mapped[str] = mapped_column(String(140))
+    # Texto largo que escribe el autor para su página de libro. No entra en el prompt: es
+    # para quien elige qué leer, no para el personaje.
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Ruta relativa dentro de MEDIA_DIR, igual que `avatar_path`/`banner_path` de `User`.
+    cover_path: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     premise: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     profile: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

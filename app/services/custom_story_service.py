@@ -30,7 +30,14 @@ from app.llm import router as llm_router
 from app.llm.prompts.custom_story import CONCEPT_SYSTEM_PROMPT, build_concept_input, build_retry_input
 from app.models.story import MemoryFact, Message, Story, StoryBlueprint, StoryEvent
 from app.models.user import User
-from app.schemas.custom_story import ConceptStoryIn, CustomStoryOut, DefinedStoryIn, DefinitionOut
+from app.schemas.custom_story import (
+    CHARACTER_FIELDS,
+    ConceptStoryIn,
+    CustomStoryOut,
+    CustomStoryPatchIn,
+    DefinedStoryIn,
+    DefinitionOut,
+)
 from app.schemas.profile import AuthorOut, StoryCardOut
 from app.schemas.story import CharacterOut
 from app.services import media_service
@@ -67,10 +74,17 @@ LIMIT_MESSAGE = (
     f"Has llegado al máximo de {MAX_BLUEPRINTS_PER_USER} historias propias. Borra alguna "
     "para crear otra."
 )
+CONCEPT_PROFILE_MESSAGE = (
+    "El perfil de una historia en modo concepto lo genera el modelo y no se edita."
+)
 
 
 class ContentRejectedError(Exception):
     """El texto del usuario no se admite. El mensaje es apto para mostrarse."""
+
+
+class ProfileNotEditableError(Exception):
+    """Se han mandado campos de personaje en una historia de modo concepto."""
 
 
 class BlueprintLimitError(Exception):
@@ -101,24 +115,55 @@ def derive_hook(setting: str) -> str:
 
 
 def build_defined_profile(payload: DefinedStoryIn, blueprint_id: str) -> tuple[CharacterProfile, str]:
-    traits = [t.strip() for t in re.split(r"[,;\n]+", payload.personality) if len(t.strip()) >= 2][:8]
+    return profile_from_definition(
+        blueprint_id,
+        name=payload.name,
+        age=payload.age,
+        personality=payload.personality,
+        speaking_style=payload.speakingStyle,
+        setting=payload.setting,
+        backstory=payload.backstory,
+        tone=payload.tone,
+        hook=payload.hook,
+    )
+
+
+def profile_from_definition(
+    blueprint_id: str,
+    *,
+    name: str,
+    age: int,
+    personality: str,
+    speaking_style: str,
+    setting: str,
+    backstory: str,
+    tone: str | None,
+    hook: str | None,
+) -> tuple[CharacterProfile, str]:
+    """El `CharacterProfile` de una historia definida a partir de lo que escribió el autor.
+
+    Toma valores sueltos y no un `DefinedStoryIn` porque la edición (`update_owned`)
+    reconstruye el perfil mezclando lo guardado con lo que trae el PATCH, y esa mezcla no
+    siempre sería un `DefinedStoryIn` válido (allí el tono es obligatorio).
+    """
+    traits = [t.strip() for t in re.split(r"[,;\n]+", personality) if len(t.strip()) >= 2][:8]
     if len(traits) < 2:
         traits.append(FILLER_TRAIT)
-    hook = payload.hook or derive_hook(payload.setting)
+    hook = hook or derive_hook(setting)
     profile = CharacterProfile(
         schema_version=1,
         id=f"propia-{blueprint_id}",
-        nombre=payload.name,
-        edad=payload.age,
+        nombre=name,
+        edad=age,
         tagline=hook,
         personalidad=tuple(traits),
-        forma_de_hablar={"registro": payload.speakingStyle},
-        trasfondo=payload.backstory,
+        forma_de_hablar={"registro": speaking_style},
+        trasfondo=backstory,
         limites=DEFAULT_LIMITS,
-        escenario_inicial=payload.setting,
+        escenario_inicial=setting,
         # La historia arranca narrando el escenario: sin inventar una voz que el usuario no dio.
-        saludo="*" + payload.setting.replace("*", "") + "*",
-        tono=payload.tone,
+        saludo="*" + setting.replace("*", "") + "*",
+        tono=tone,
     )
     return profile, hook
 
@@ -290,25 +335,75 @@ def get_owned(db: DbSession, user_id: str, blueprint_id: str) -> StoryBlueprint 
     return blueprint
 
 
-def update_settings(
-    db: DbSession,
-    blueprint: StoryBlueprint,
-    *,
-    is_public: bool | None = None,
-    free_first_read: bool | None = None,
-    adult: bool | None = None,
-) -> StoryBlueprint:
-    if is_public is not None:
-        if is_public and not blueprint.is_public:
+def update_owned(db: DbSession, blueprint: StoryBlueprint, patch: CustomStoryPatchIn) -> StoryBlueprint:
+    """Aplica un PATCH del autor. Una sola función y no una por campo porque el perfil
+    depende de varios a la vez: cambiar el escenario, el tono o cualquier rasgo obliga a
+    reconstruir el JSON entero.
+
+    Nada se escribe hasta que todo el texto pasa el filtro de contenido: un PATCH
+    rechazado no deja la historia a medio editar.
+    """
+    changes = patch.model_dump(exclude_unset=True)
+    character = {k: v for k, v in changes.items() if k in CHARACTER_FIELDS}
+    if character and blueprint.mode != "definida":
+        raise ProfileNotEditableError(CONCEPT_PROFILE_MESSAGE)
+
+    rejection = moderation.check_user_text(*(v for v in changes.values() if isinstance(v, str)))
+    if rejection:
+        raise ContentRejectedError(rejection)
+
+    if "title" in changes:
+        blueprint.title = changes["title"]
+    if "hook" in changes:
+        blueprint.hook = changes["hook"]
+    if "description" in changes:
+        blueprint.description = changes["description"]
+
+    # El tono vive dentro del perfil, así que tocarlo obliga a reescribirlo. En definida,
+    # además, el gancho es su `tagline`: si cambia uno, cambia el otro.
+    toca_el_perfil = "tone" in changes or (
+        blueprint.mode == "definida" and (character or "hook" in changes)
+    )
+    if toca_el_perfil:
+        _rewrite_profile(blueprint, changes, character)
+
+    if "isPublic" in changes:
+        if changes["isPublic"] and not blueprint.is_public:
             blueprint.published_at = _now()
-        blueprint.is_public = is_public
-    if free_first_read is not None:
-        blueprint.free_first_read = free_first_read
-    if adult is not None:
-        blueprint.adult = adult
+        blueprint.is_public = changes["isPublic"]
+    if "freeFirstRead" in changes:
+        blueprint.free_first_read = changes["freeFirstRead"]
+    if "adult" in changes:
+        blueprint.adult = changes["adult"]
     db.commit()
     db.refresh(blueprint)
     return blueprint
+
+
+def _rewrite_profile(blueprint: StoryBlueprint, changes: dict, character: dict) -> None:
+    profile = profile_of(blueprint)
+    tone = changes["tone"] if "tone" in changes else profile.tono
+    if blueprint.mode != "definida":
+        # En concepto solo puede cambiar el tono: el resto lo inventó el modelo.
+        rebuilt = profile.model_copy(update={"tono": tone})
+    else:
+        definition = _definition(blueprint, profile)
+        datos = definition.model_dump() | character
+        rebuilt, _ = profile_from_definition(
+            blueprint.id,
+            name=datos["name"],
+            age=datos["age"],
+            personality=datos["personality"],
+            speaking_style=datos["speakingStyle"],
+            setting=datos["setting"],
+            backstory=datos["backstory"],
+            tone=tone,
+            # El del autor: no se re-deriva del escenario nuevo, que pudo escribirlo a mano.
+            hook=blueprint.hook,
+        )
+    # `profile` es una columna JSON: se reasigna entera, porque mutar el dict no lo vería
+    # SQLAlchemy y el cambio no llegaría a guardarse.
+    blueprint.profile = rebuilt.model_dump(mode="json", exclude={"free_first_read"})
 
 
 def delete_owned(db: DbSession, blueprint: StoryBlueprint) -> None:
@@ -321,6 +416,8 @@ def delete_owned(db: DbSession, blueprint: StoryBlueprint) -> None:
       continuar, y copiarlo a cada partida duplicaría secretos por toda la base. Para el
       autor, Explorar y cualquier partida nueva, ya no existe.
     - Si nadie más la jugó, se borra de verdad: no se guarda un perfil que no usa nadie.
+      Solo entonces se borra la portada; con `deleted_at` la fila sigue ahí y su ficha,
+      para quien ya la juega, también.
     """
     ref = character_ref(blueprint.id)
     own_story_ids = select(Story.id).where(Story.user_id == blueprint.owner_id, Story.character_id == ref)
@@ -329,12 +426,16 @@ def delete_owned(db: DbSession, blueprint: StoryBlueprint) -> None:
     db.execute(delete(Story).where(Story.user_id == blueprint.owner_id, Story.character_id == ref))
 
     played_by_others = db.scalar(select(func.count()).where(Story.character_id == ref))
+    cover = None
     if played_by_others:
         blueprint.deleted_at = _now()
         blueprint.is_public = False
     else:
+        cover = blueprint.cover_path
         db.delete(blueprint)
     db.commit()
+    # Después del commit: si fallara, la fila seguiría apuntando a un fichero que existe.
+    media_service.delete_file(cover)
 
 
 def blueprint_for(db: DbSession, character_id: str) -> StoryBlueprint | None:
@@ -381,6 +482,8 @@ def to_out(blueprint: StoryBlueprint) -> CustomStoryOut:
         mode=blueprint.mode,
         title=blueprint.title,
         hook=blueprint.hook,
+        description=blueprint.description,
+        coverUrl=media_service.url_for(blueprint.cover_path),
         premise=blueprint.premise,
         tone=profile.tono,
         definition=_definition(blueprint, profile),
@@ -425,6 +528,7 @@ def card_out(blueprint: StoryBlueprint, author: User, viewer_id: str) -> StoryCa
         title=blueprint.title,
         hook=blueprint.hook,
         tone=profile.tono,
+        coverUrl=media_service.url_for(blueprint.cover_path),
         definition=_definition(blueprint, profile),
         author=AuthorOut(
             displayName=author.display_name,

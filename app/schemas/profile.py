@@ -34,6 +34,7 @@ class StoryCardOut(BaseModel):
     title: str
     hook: str
     tone: str | None
+    coverUrl: str | None = None
     # Solo en modo definida: lo que escribió el autor. En concepto, siempre null.
     definition: DefinitionOut | None
     author: AuthorOut
@@ -69,6 +70,8 @@ class ReadingItemOut(BaseModel):
     title: str
     # null en modo concepto: el nombre del personaje es parte de lo que se descubre jugando.
     characterName: str | None
+    # Portada de la historia propia; null en los predefinidos y en las propias sin portada.
+    coverUrl: str | None = None
     progress: ProgressOut
     updatedAt: datetime | None
 

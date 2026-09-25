@@ -15,6 +15,8 @@ class BookStatsOut(BaseModel):
     reviewCount: int
 
 
+
+
 class BookProgressOut(BaseModel):
     phase: str
     phaseLabel: str
@@ -37,6 +39,23 @@ class ReviewOut(BaseModel):
     isMine: bool
     createdAt: datetime | None
     updatedAt: datetime | None
+
+
+class CustomStoryStatsOut(BaseModel):
+    """Lo que ve el autor de su propia historia (`GET /api/custom-stories/{id}/stats`).
+
+    Vive aquí y no en `app.schemas.custom_story` para no montar un ciclo de imports:
+    reutiliza `ReviewOut`, y este módulo ya importa de `profile`, que importa de
+    `custom_story`.
+    """
+
+    # Cuentas distintas que han jugado la historia, contando las partidas ya terminadas.
+    readers: int
+    # Partidas sin archivar ni cerrar ahora mismo (el mismo criterio que `active_story`).
+    activeStories: int
+    ratingAverage: float | None
+    reviewCount: int
+    recentReviews: list[ReviewOut]
 
 
 class ReviewPageOut(BaseModel):
@@ -70,6 +89,8 @@ class BookOut(BaseModel):
     hook: str
     characterName: str | None
     tone: str | None
+    # Solo las historias propias tienen portada; los predefinidos, siempre null.
+    coverUrl: str | None = None
     # null = Psique (predefinido).
     author: AuthorOut | None
     isMine: bool
@@ -104,6 +125,7 @@ class BookCardOut(BaseModel):
     title: str
     hook: str
     tone: str | None
+    coverUrl: str | None = None
     author: AuthorOut | None
     readers: int
     adult: bool

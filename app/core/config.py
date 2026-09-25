@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     MEDIA_BASE_URL: str = ""
     AVATAR_MAX_BYTES: int = 2 * 1024 * 1024
     BANNER_MAX_BYTES: int = 4 * 1024 * 1024
+    # Portada de una historia propia: apaisada y grande, como el banner.
+    COVER_MAX_BYTES: int = 4 * 1024 * 1024
 
     # --- Economía (óbolos) ---
     # Los fija el servidor: el cliente nunca manda un importe, solo pide acciones.

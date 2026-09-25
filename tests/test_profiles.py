@@ -136,7 +136,7 @@ def test_estanterias_publicadas_y_leyendo(client, fake_llm):
     leyendo = perfil["shelves"]["reading"]["items"]
     # La partida con la historia privada no sale para otros: su título no está publicado.
     assert [i["characterId"] for i in leyendo] == ["lucia"]
-    assert set(leyendo[0]) == {"characterId", "origin", "mode", "title", "characterName", "progress", "updatedAt"}
+    assert set(leyendo[0]) == {"characterId", "origin", "mode", "title", "characterName", "coverUrl", "progress", "updatedAt"}
     assert leyendo[0]["progress"]["phase"] == "conocerse"
     for filtrado in ("Un mensaje muy privado", "Me alegra que hayas vuelto", "messages", "affinity", "Mi cuaderno secreto"):
         assert filtrado not in resp.text

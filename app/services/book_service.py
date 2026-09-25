@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
-from app.models.story import STORY_ARCHIVED, STORY_CLOSED, BookReview, Story, StoryBlueprint
+from app.models.story import STORY_ACTIVE, STORY_ARCHIVED, STORY_CLOSED, BookReview, Story, StoryBlueprint
 from app.models.user import User
 from app.schemas.book import (
     BookCardOut,
@@ -23,6 +23,7 @@ from app.schemas.book import (
     BookProgressOut,
     BookStatsOut,
     BookViewerOut,
+    CustomStoryStatsOut,
     HistoryItemOut,
     PrimaryActionOut,
     ReviewIn,
@@ -52,6 +53,8 @@ class Book:
     published_at: datetime | None
     created_at: datetime | None
     adult: bool = False
+    # Solo las propias: los predefinidos no tienen portada subida por nadie.
+    cover_path: str | None = None
 
 
 def author_out(user: User) -> AuthorOut:
@@ -88,6 +91,7 @@ def _from_blueprint(blueprint: StoryBlueprint, owner: User) -> Book:
         published_at=blueprint.published_at,
         created_at=blueprint.created_at,
         adult=blueprint.adult,
+        cover_path=blueprint.cover_path,
     )
 
 
@@ -141,10 +145,16 @@ def review_out(review: BookReview, author: User, viewer: User) -> ReviewOut:
     )
 
 
-def book_out(db: DbSession, viewer: User, book: Book) -> BookOut:
-    rating_avg, review_count = db.execute(
-        select(func.avg(BookReview.rating), func.count(BookReview.id)).where(BookReview.book_id == book.id)
+def _rating(db: DbSession, book_id: str) -> tuple[float | None, int]:
+    """Nota media (a un decimal) y número de reseñas."""
+    average, count = db.execute(
+        select(func.avg(BookReview.rating), func.count(BookReview.id)).where(BookReview.book_id == book_id)
     ).one()
+    return (round(float(average), 1) if average is not None else None, count)
+
+
+def book_out(db: DbSession, viewer: User, book: Book) -> BookOut:
+    rating_avg, review_count = _rating(db, book.id)
 
     active = story_service.active_story(db, viewer.id, book.id)
     has_read = story_service.has_read(db, viewer.id, book.id)
@@ -168,6 +178,7 @@ def book_out(db: DbSession, viewer: User, book: Book) -> BookOut:
         hook=book.hook,
         characterName=book.character_name,
         tone=book.tone,
+        coverUrl=media_service.url_for(book.cover_path),
         author=author_out(book.owner) if book.owner else None,
         isMine=is_author(book, viewer),
         isPublic=book.is_public,
@@ -179,7 +190,7 @@ def book_out(db: DbSession, viewer: User, book: Book) -> BookOut:
         createdAt=book.created_at,
         stats=BookStatsOut(
             readers=_readers(db, [book.id]).get(book.id, 0),
-            ratingAverage=round(float(rating_avg), 1) if rating_avg is not None else None,
+            ratingAverage=rating_avg,
             reviewCount=review_count,
         ),
         viewer=BookViewerOut(
@@ -227,6 +238,35 @@ def history(db: DbSession, viewer: User, book: Book) -> list[HistoryItemOut]:
     return items
 
 
+RECENT_REVIEWS = 5
+
+
+def blueprint_stats(db: DbSession, viewer: User, blueprint: StoryBlueprint) -> CustomStoryStatsOut:
+    """Cómo le va a una historia propia, para su autor.
+
+    Vive aquí y no en `custom_story_service` porque reutiliza los lectores y la nota media
+    de los libros, y `book_service` ya importa de allí (al revés sería un ciclo).
+    """
+    book_id = custom_story_service.character_ref(blueprint.id)
+    average, count = _rating(db, book_id)
+    rows = db.execute(
+        select(BookReview, User)
+        .join(User, User.id == BookReview.user_id)
+        .where(BookReview.book_id == book_id)
+        .order_by(BookReview.created_at.desc(), BookReview.id.desc())
+        .limit(RECENT_REVIEWS)
+    ).all()
+    return CustomStoryStatsOut(
+        readers=_readers(db, [book_id]).get(book_id, 0),
+        activeStories=db.scalar(
+            select(func.count()).where(Story.character_id == book_id, Story.status == STORY_ACTIVE)
+        ),
+        ratingAverage=average,
+        reviewCount=count,
+        recentReviews=[review_out(r, u, viewer) for r, u in rows],
+    )
+
+
 # --- Recomendados ------------------------------------------------------------------------
 
 
@@ -272,6 +312,7 @@ def recommended(db: DbSession, book: Book, viewer: User) -> list[BookCardOut]:
     return [
         BookCardOut(
             id=c.id, origin=c.origin, mode=c.mode, title=c.title, hook=c.hook, tone=c.tone,
+            coverUrl=media_service.url_for(c.cover_path),
             author=author_out(c.owner) if c.owner else None, readers=readers.get(c.id, 0), adult=c.adult,
         )
         for c in candidates[:RECOMMENDED_LIMIT]

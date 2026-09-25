@@ -1,13 +1,19 @@
 """Historias propias: modos definida y concepto, con el LLM doblado."""
 import json
+from io import BytesIO
 
 import pytest
+from PIL import Image
+from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.database import SessionLocal
 from app.llm import router as llm_router
 from app.llm.prompts.story import REVEAL_GRADUALLY
+from app.models.story import STORY_ARCHIVED, Story
 from app.story.content_policy import EXPLICIT_INPUT_MESSAGE, MINORS_INPUT_MESSAGE, check_user_text
 from tests.conftest import auth_headers, parse_sse
+from tests.test_media import _fichero, _imagen
 
 SECRETO = "En realidad es la heredera del faro y lo oculta desde hace años."
 
@@ -290,3 +296,328 @@ def test_un_personaje_predefinido_no_recibe_la_instruccion_de_revelar(client, fa
 def test_sin_token_es_401(client):
     assert client.get("/api/custom-stories").status_code == 401
     assert client.post("/api/custom-stories", json=_definida()).status_code == 401
+
+
+# --- Ficha del autor: leer y editar -----------------------------------------------------
+
+
+def _patch(client, headers, blueprint_id, cuerpo, esperado=200):
+    resp = client.patch(f"/api/custom-stories/{blueprint_id}", json=cuerpo, headers=headers)
+    assert resp.status_code == esperado, resp.text
+    return resp.json()
+
+
+def test_detalle_de_una_historia_propia(client):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    resp = client.get(f"/api/custom-stories/{creada['id']}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == creada
+    assert creada["description"] is None and creada["coverUrl"] is None
+
+
+@pytest.mark.parametrize(
+    "cuerpo, campo, esperado",
+    [
+        ({"title": "  Otro título  "}, "title", "Otro título"),
+        ({"hook": "Un gancho nuevo y suficientemente largo"}, "hook", "Un gancho nuevo y suficientemente largo"),
+        ({"description": "  Una novela corta sobre esperar.  "}, "description", "Una novela corta sobre esperar."),
+        ({"tone": "seco y luminoso"}, "tone", "seco y luminoso"),
+        ({"isPublic": True}, "isPublic", True),
+        ({"freeFirstRead": False}, "freeFirstRead", False),
+        ({"adult": True}, "adult", True),
+    ],
+)
+def test_patch_campo_a_campo(client, cuerpo, campo, esperado):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    body = _patch(client, headers, creada["id"], cuerpo)
+    assert body[campo] == esperado
+    # Solo cambia lo que se manda (publicar sella además la fecha; eso lo prueba el
+    # siguiente test).
+    intactos = {"definition", "publishedAt"}
+    sin_tocar = {k: v for k, v in creada.items() if k not in cuerpo and k not in intactos}
+    assert {k: body[k] for k in sin_tocar} == sin_tocar
+    # Y se ha guardado de verdad.
+    assert client.get(f"/api/custom-stories/{creada['id']}", headers=headers).json()[campo] == esperado
+
+
+def test_publicar_sella_la_fecha_y_despublicar_no_la_borra(client):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    publicada = _patch(client, headers, creada["id"], {"isPublic": True})
+    assert publicada["publishedAt"] is not None
+    despublicada = _patch(client, headers, creada["id"], {"isPublic": False})
+    assert despublicada["publishedAt"] == publicada["publishedAt"]
+
+
+@pytest.mark.parametrize("vacio", [None, "", "   "])
+def test_patch_borra_la_descripcion_y_el_tono(client, vacio):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    _patch(client, headers, creada["id"], {"description": "Algo escrito por la autora."})
+    body = _patch(client, headers, creada["id"], {"description": vacio, "tone": vacio})
+    assert body["description"] is None and body["tone"] is None
+    # El tono vive en el perfil: también sale de la definición.
+    assert body["definition"]["tone"] is None
+
+
+def test_patch_de_personaje_reescribe_el_perfil_y_la_partida_nueva(client, fake_llm):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    body = _patch(
+        client,
+        headers,
+        creada["id"],
+        {
+            "name": "Marta Ovejero",
+            "age": 41,
+            "personality": "seca; divertida cuando confía",
+            "speakingStyle": "Habla rápido y se come los finales de las palabras.",
+            "setting": "Un puerto pesquero al amanecer, con el hielo aún sin repartir.",
+            "backstory": "Heredó el barco de su madre y sigue saliendo a faenar aunque no le haga falta.",
+        },
+    )
+    assert body["definition"]["name"] == "Marta Ovejero"
+    assert body["definition"]["age"] == 41
+    assert body["definition"]["personality"] == "seca, divertida cuando confía"
+    assert body["definition"]["setting"].startswith("Un puerto pesquero")
+    # El gancho lo escribió (o lo derivó) la autora: no se re-deriva del escenario nuevo.
+    assert body["hook"] == creada["hook"]
+
+    story = client.post("/api/stories", json={"characterId": creada["characterId"]}, headers=headers)
+    assert story.status_code == 201, story.text
+    story = story.json()
+    assert story["characterName"] == "Marta Ovejero"
+    # El saludo se narra desde el escenario nuevo.
+    assert "puerto pesquero" in story["messages"][0]["content"]
+
+    client.post(f"/api/stories/{story['id']}/chat", json={"message": "Buenos días."}, headers=headers)
+    system_prompt = fake_llm.stream_calls[-1][0]
+    assert "Marta Ovejero" in system_prompt and "se come los finales" in system_prompt
+
+
+def test_patch_de_personaje_en_concepto_es_422(client):
+    headers = auth_headers(client)
+    concepto = _crear(client, headers, {"mode": "concepto", "premise": "Una relojera y un viajero que no sabe que lo es"})
+    resp = client.patch(f"/api/custom-stories/{concepto['id']}", json={"name": "Otra"}, headers=headers)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == (
+        "El perfil de una historia en modo concepto lo genera el modelo y no se edita."
+    )
+    # El tono sí se puede cambiar: lo escribió el autor.
+    assert _patch(client, headers, concepto["id"], {"tone": "áspero"})["tone"] == "áspero"
+
+
+def test_patch_sin_campos_es_422(client):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    resp = client.patch(f"/api/custom-stories/{creada['id']}", json={}, headers=headers)
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["msg"] == "Manda al menos un campo que cambiar."
+
+
+@pytest.mark.parametrize(
+    "cuerpo",
+    [
+        {"description": "x" * 1001},
+        {"title": "ab"},
+        {"title": None},
+        {"hook": "corto"},
+        {"age": 17},
+        {"name": "Nombre 123"},
+        {"setting": "corto"},
+        {"campo_inventado": "hola"},
+        {"premise": "no se edita"},
+    ],
+)
+def test_patch_con_valores_no_validos_es_422(client, cuerpo):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    assert client.patch(f"/api/custom-stories/{creada['id']}", json=cuerpo, headers=headers).status_code == 422
+
+
+def test_la_descripcion_de_1000_caracteres_entra_y_la_de_1001_no(client):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    assert len(_patch(client, headers, creada["id"], {"description": "x" * 1000})["description"]) == 1000
+    resp = client.patch(f"/api/custom-stories/{creada['id']}", json={"description": "x" * 1001}, headers=headers)
+    assert "1000 caracteres" in resp.json()["detail"][0]["msg"]
+
+
+@pytest.mark.parametrize(
+    "cuerpo, mensaje",
+    [
+        ({"description": "Busca sexo con cada cliente que entra por la puerta del local."}, EXPLICIT_INPUT_MESSAGE),
+        ({"title": "Romance entre dos adolescentes"}, MINORS_INPUT_MESSAGE),
+        ({"backstory": "Conoció a una niña en el parque y desde entonces vuelve cada tarde a buscarla."}, MINORS_INPUT_MESSAGE),
+    ],
+)
+def test_patch_con_texto_prohibido_es_422_y_no_guarda_nada(client, cuerpo, mensaje):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    resp = client.patch(f"/api/custom-stories/{creada['id']}", json=cuerpo | {"isPublic": True}, headers=headers)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == mensaje
+    # Ni siquiera lo que sí era válido en el mismo PATCH.
+    assert client.get(f"/api/custom-stories/{creada['id']}", headers=headers).json()["isPublic"] is False
+
+
+def test_la_ficha_de_otra_cuenta_es_404(client):
+    duena = auth_headers(client)
+    otra = auth_headers(client)
+    propia = _crear(client, duena, _definida())
+    ruta = f"/api/custom-stories/{propia['id']}"
+    assert client.get(ruta, headers=otra).status_code == 404
+    assert client.get(f"{ruta}/stats", headers=otra).status_code == 404
+    assert client.patch(ruta, json={"title": "Secuestrada"}, headers=otra).status_code == 404
+    assert client.post(f"{ruta}/cover", files={"file": ("x.png", _portada(), "image/png")}, headers=otra).status_code == 404
+    assert client.delete(f"{ruta}/cover", headers=otra).status_code == 404
+    assert client.get(ruta, headers=duena).json()["title"] == "Café a medianoche"
+
+
+def test_la_ficha_de_una_historia_que_no_existe_es_404(client):
+    headers = auth_headers(client)
+    assert client.get("/api/custom-stories/nohay", headers=headers).status_code == 404
+    assert client.get("/api/custom-stories/nohay/stats", headers=headers).status_code == 404
+
+
+# --- Portada ----------------------------------------------------------------------------
+
+
+def _portada(**kwargs) -> bytes:
+    return _imagen(fmt="PNG", exif=False, **kwargs)
+
+
+def _subir_portada(client, headers, blueprint_id, data=None, nombre="portada.png", tipo="image/png"):
+    return client.post(
+        f"/api/custom-stories/{blueprint_id}/cover",
+        files={"file": (nombre, _portada() if data is None else data, tipo)},
+        headers=headers,
+    )
+
+
+def test_subir_portada_recodifica_a_webp_y_la_devuelve(client):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    resp = _subir_portada(client, headers, creada["id"], _portada(size=(2400, 1200)))
+    assert resp.status_code == 200, resp.text
+    url = resp.json()["coverUrl"]
+    assert url.startswith("/media/covers/") and url.endswith(".webp")
+
+    servida = client.get(url)
+    assert servida.headers["content-type"] == "image/webp"
+    with Image.open(BytesIO(servida.content)) as img:
+        assert img.format == "WEBP"
+        # Sin recortar: la proporción apaisada se conserva y el lado mayor es 1280.
+        assert img.size == (1280, 640)
+    assert client.get(f"/api/custom-stories/{creada['id']}", headers=headers).json()["coverUrl"] == url
+
+
+def test_portada_con_tipo_falso_o_demasiado_grande(client, monkeypatch):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    gif = _imagen("GIF", exif=False)
+    resp = _subir_portada(client, headers, creada["id"], gif)
+    assert resp.status_code == 415 and resp.json()["detail"][0]["loc"] == ["body", "file"]
+    assert _subir_portada(client, headers, creada["id"], b"ni siquiera es una imagen" * 20).status_code == 415
+
+    monkeypatch.setattr(settings, "COVER_MAX_BYTES", 5_000)
+    # Por Content-Length, sin llegar a parsear el formulario.
+    resp = _subir_portada(client, headers, creada["id"], b"\xff" * 30_000)
+    assert resp.status_code == 413 and resp.json()["detail"][0]["type"] == "file_too_large"
+    # Dentro del margen del multipart pero por encima del límite: se corta al leer.
+    assert _subir_portada(client, headers, creada["id"], _portada() + b"\0" * 6_000).status_code == 413
+    assert client.get(f"/api/custom-stories/{creada['id']}", headers=headers).json()["coverUrl"] is None
+
+
+def test_reemplazar_y_quitar_la_portada_borran_el_fichero(client):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    primera = _fichero(_subir_portada(client, headers, creada["id"]).json()["coverUrl"])
+    segunda = _fichero(_subir_portada(client, headers, creada["id"], _portada(size=(200, 100))).json()["coverUrl"])
+    assert primera != segunda
+    assert not primera.exists() and segunda.exists()
+
+    assert client.delete(f"/api/custom-stories/{creada['id']}/cover", headers=headers).status_code == 204
+    assert not segunda.exists()
+    assert client.get(f"/api/custom-stories/{creada['id']}", headers=headers).json()["coverUrl"] is None
+    # Quitar una portada que ya no está no falla.
+    assert client.delete(f"/api/custom-stories/{creada['id']}/cover", headers=headers).status_code == 204
+
+
+def test_borrar_la_historia_borra_su_portada(client):
+    headers = auth_headers(client)
+    creada = _crear(client, headers, _definida())
+    fichero = _fichero(_subir_portada(client, headers, creada["id"]).json()["coverUrl"])
+    assert client.delete(f"/api/custom-stories/{creada['id']}", headers=headers).status_code == 204
+    assert not fichero.exists()
+
+
+def test_la_portada_sale_en_explorar_en_el_libro_y_en_las_estanterias(client, fake_llm):
+    autora = auth_headers(client)
+    creada = _crear(client, autora, _definida(isPublic=True))
+    url = _subir_portada(client, autora, creada["id"]).json()["coverUrl"]
+
+    lectora = auth_headers(client)
+    tarjetas = {c["id"]: c for c in client.get("/api/explore", params={"limit": 50}, headers=lectora).json()["items"]}
+    assert tarjetas[creada["id"]]["coverUrl"] == url
+
+    libro = client.get(f"/api/books/{creada['characterId']}", headers=lectora).json()
+    assert libro["coverUrl"] == url
+    assert client.get("/api/books/lucia", headers=lectora).json()["coverUrl"] is None
+
+    client.post("/api/stories", json={"characterId": creada["characterId"]}, headers=lectora)
+    handle = client.get("/api/me/profile", headers=lectora).json()["handle"]
+    estanterias = client.get(f"/api/profiles/{handle}", headers=lectora).json()["shelves"]
+    [leyendo] = [i for i in estanterias["reading"]["items"] if i["characterId"] == creada["characterId"]]
+    assert leyendo["coverUrl"] == url
+
+    autora_handle = client.get("/api/me/profile", headers=autora).json()["handle"]
+    publicadas = client.get(f"/api/profiles/{autora_handle}", headers=autora).json()["shelves"]["published"]["items"]
+    assert [c["coverUrl"] for c in publicadas if c["id"] == creada["id"]] == [url]
+
+
+# --- Estadísticas -----------------------------------------------------------------------
+
+
+def test_estadisticas_de_una_historia_propia(client, fake_llm):
+    autora = auth_headers(client)
+    creada = _crear(client, autora, _definida(isPublic=True))
+    ruta = f"/api/custom-stories/{creada['id']}/stats"
+
+    vacias = client.get(ruta, headers=autora).json()
+    assert vacias == {
+        "readers": 0, "activeStories": 0, "ratingAverage": None, "reviewCount": 0, "recentReviews": []
+    }
+
+    primera, segunda = auth_headers(client), auth_headers(client)
+    for lectora in (primera, segunda):
+        resp = client.post("/api/stories", json={"characterId": creada["characterId"]}, headers=lectora)
+        assert resp.status_code == 201, resp.text
+    # La segunda deja de tener partida activa: cuenta como lectora, no como partida en curso.
+    with SessionLocal() as db:
+        story = db.scalars(
+            select(Story).where(Story.character_id == creada["characterId"]).order_by(Story.created_at.desc())
+        ).first()
+        story.status = STORY_ARCHIVED
+        db.commit()
+
+    for lectora, nota, texto in ((primera, 5, "Me la he leído dos veces."), (segunda, 4, None)):
+        resp = client.put(
+            f"/api/books/{creada['characterId']}/reviews/me",
+            json={"rating": nota, "text": texto},
+            headers=lectora,
+        )
+        assert resp.status_code in (200, 201), resp.text
+
+    stats = client.get(ruta, headers=autora).json()
+    assert stats["readers"] == 2
+    assert stats["activeStories"] == 1
+    assert stats["ratingAverage"] == 4.5
+    assert stats["reviewCount"] == 2
+    # Las más recientes primero, con el autor de cada una.
+    assert [r["rating"] for r in stats["recentReviews"]] == [4, 5]
+    assert stats["recentReviews"][-1]["text"] == "Me la he leído dos veces."
+    assert stats["recentReviews"][0]["author"]["handle"]
+    assert all(r["isMine"] is False for r in stats["recentReviews"])

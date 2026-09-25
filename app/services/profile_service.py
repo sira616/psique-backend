@@ -178,7 +178,14 @@ def _reading_item(story: Story, blueprints: dict, is_owner: bool) -> ReadingItem
     name = None
     if blueprint.mode == "definida":
         name = custom_story_service.profile_of(blueprint).nombre
-    return ReadingItemOut(**common, origin="propia", mode=blueprint.mode, title=blueprint.title, characterName=name)
+    return ReadingItemOut(
+        **common,
+        origin="propia",
+        mode=blueprint.mode,
+        title=blueprint.title,
+        characterName=name,
+        coverUrl=media_service.url_for(blueprint.cover_path),
+    )
 
 
 def profile_out(db: DbSession, owner: User, viewer: User) -> ProfileOut:

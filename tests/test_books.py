@@ -405,7 +405,7 @@ def test_recomendados_excluyen_privados_borrados_y_el_actual(client):
     assert ids[0] == gemelo["characterId"]
     for fuera in (actual, privado_propio, borrado, privado_ajeno):
         assert fuera["characterId"] not in ids
-    assert set(cartas[0]) == {"id", "origin", "mode", "title", "hook", "tone", "author", "readers", "adult"}
+    assert set(cartas[0]) == {"id", "origin", "mode", "title", "hook", "tone", "coverUrl", "author", "readers", "adult"}
 
 
 # --- Reseñas ----------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Avatar y banner: validar, re-codificar y guardar.
+"""Avatar, banner y portada: validar, re-codificar y guardar.
 
 Nada de lo que sube el usuario se sirve tal cual. Se abre con Pillow (el tipo lo decide
 el contenido, no la extensión ni el Content-Type), se decodifica y se vuelve a codificar
@@ -17,7 +17,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import settings
-from app.models.user import User
+from app.core.database import Base
 
 ALLOWED_FORMATS = ("JPEG", "PNG", "WEBP")
 # 24 Mpx cubre la foto de cualquier móvil y deja fuera las bombas de descompresión: un
@@ -29,18 +29,22 @@ WEBP_QUALITY = 85
 
 @dataclass(frozen=True)
 class ImageKind:
-    field: str  # atributo de User
+    field: str  # columna de la fila dueña de la imagen
     subdir: str
     max_side: int
+    setting_name: str  # el `*_MAX_BYTES` de `settings` que la limita
 
     @property
     def max_bytes(self) -> int:
         # Leído en cada uso y no al importar: los tests cambian los límites.
-        return settings.AVATAR_MAX_BYTES if self.field == "avatar_path" else settings.BANNER_MAX_BYTES
+        return getattr(settings, self.setting_name)
 
 
-AVATAR = ImageKind(field="avatar_path", subdir="avatars", max_side=512)
-BANNER = ImageKind(field="banner_path", subdir="banners", max_side=1600)
+AVATAR = ImageKind(field="avatar_path", subdir="avatars", max_side=512, setting_name="AVATAR_MAX_BYTES")
+BANNER = ImageKind(field="banner_path", subdir="banners", max_side=1600, setting_name="BANNER_MAX_BYTES")
+# Apaisada, pero sin recortar: 1280 por lado y que el CSS decida la proporción. Recortar
+# aquí perdería píxeles que el frontend podría querer en otra maqueta.
+COVER = ImageKind(field="cover_path", subdir="covers", max_side=1280, setting_name="COVER_MAX_BYTES")
 
 
 class ImageRejectedError(Exception):
@@ -105,7 +109,10 @@ def delete_file(relative: str | None) -> None:
     target.unlink(missing_ok=True)
 
 
-def store(db: DbSession, user: User, kind: ImageKind, data: bytes) -> None:
+def store(db: DbSession, owner: Base, kind: ImageKind, data: bytes) -> None:
+    """`owner` es cualquier fila con la columna `kind.field`: `User` (avatar, banner) o
+    `StoryBlueprint` (portada). El tipo no puede ser más concreto porque el nombre de la
+    columna lo pone `kind`, no la clase."""
     encoded = reencode(data, kind.max_side)
     folder = media_root() / kind.subdir
     folder.mkdir(parents=True, exist_ok=True)
@@ -114,22 +121,22 @@ def store(db: DbSession, user: User, kind: ImageKind, data: bytes) -> None:
     relative = f"{kind.subdir}/{secrets.token_urlsafe(18)}.webp"
     (media_root() / relative).write_bytes(encoded)
 
-    previous = getattr(user, kind.field)
-    setattr(user, kind.field, relative)
+    previous = getattr(owner, kind.field)
+    setattr(owner, kind.field, relative)
     try:
         db.commit()
     except Exception:
         db.rollback()
         delete_file(relative)
         raise
-    # Después del commit: si fallara, el usuario seguiría apuntando al fichero anterior.
+    # Después del commit: si fallara, la fila seguiría apuntando al fichero anterior.
     delete_file(previous)
 
 
-def remove(db: DbSession, user: User, kind: ImageKind) -> None:
-    previous = getattr(user, kind.field)
+def remove(db: DbSession, owner: Base, kind: ImageKind) -> None:
+    previous = getattr(owner, kind.field)
     if previous is None:
         return
-    setattr(user, kind.field, None)
+    setattr(owner, kind.field, None)
     db.commit()
     delete_file(previous)
