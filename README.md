@@ -16,7 +16,20 @@ conjunto cerrado y unos hechos sobre la persona, y ambos pasan por Pydantic y po
 lista blanca antes de guardarse. Pesos, umbrales y transiciones son reglas explícitas
 en `app/story/state_machine.py`, y cada transición guarda una razón legible.
 
-## Arranque (Windows, PowerShell)
+## Arranque
+
+Linux / macOS (bash):
+
+```bash
+python -m venv venv
+venv/bin/python -m pip install -r requirements.txt
+cp .env.example .env
+# Rellena JWT_SECRET (y ANTHROPIC_API_KEY si quieres respuestas reales):
+venv/bin/python -c "import secrets; print(secrets.token_urlsafe(48))"
+venv/bin/python -m scripts.dev --port 8010
+```
+
+Windows (PowerShell):
 
 ```powershell
 python -m venv venv
@@ -36,6 +49,12 @@ Las migraciones se aplican solas al arrancar. Sin `ANTHROPIC_API_KEY` el modo cl
 responde con un texto de demo, útil para probar el flujo completo sin gastar.
 
 Tests (sin red ni claves, LLM doblado):
+
+```bash
+venv/bin/python -m pytest -q
+```
+
+En Windows:
 
 ```powershell
 .\venv\Scripts\python.exe -m pytest -q
@@ -92,11 +111,23 @@ app/
     guardrail.py         fundido a negro, cuarta pared, datos sensibles (por frases)
     context.py           ventana de N mensajes + resumen rodante (stub)
   services/    auth, historias, turno de chat en streaming
-  api/         auth, me, stories
+  api/         routers, uno por módulo (todo bajo /api)
+    auth, me, profiles      cuenta, términos/incidencias y perfil público
+    stories, custom_stories historias con personajes y propias (publicar)
+    books, explore          libros y explorador de historias públicas
+    economy                 economía
+    policy, dev             política de contenido y cola de moderación (dev)
+    _uploads                subida de imágenes compartida (avatar, banner, portada)
 migrations/    Alembic (render_as_batch para SQLite)
 ```
 
 ## Cambiar un modelo
+
+```bash
+venv/bin/python -m alembic revision --autogenerate -m "qué cambia"
+```
+
+En Windows:
 
 ```powershell
 .\venv\Scripts\python.exe -m alembic revision --autogenerate -m "qué cambia"
@@ -110,8 +141,7 @@ modelo sin migración.
 - **Resumen rodante**: `app/story/context.py::rolling_summary` es un stub que recorta
   mensajes antiguos. Sustituir por un resumen generado por el LLM cada K turnos.
 - **RAG** (lore de personajes, recuerdos largos): no incluido para no arrastrar
-  `sentence-transformers`. Punto de partida: `platano-backend/app/rag/`
-  (chunking, embeddings, retriever).
+  `sentence-transformers`. Haría falta chunking, embeddings y un retriever.
 - **Guardrail**: es de patrones; valorar un clasificador para eufemismos y paráfrasis.
   También falta un filtro de entrada (hoy la entrada solo influye vía señales).
 - **Caché de prompt**: el system prompt ya va ordenado de estable a variable; falta
